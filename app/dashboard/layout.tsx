@@ -47,8 +47,8 @@ export default function DashboardLayout({
               <div className="absolute inset-4 border-4 border-green-500 rounded-full animate-spin border-t-transparent"></div>
               <div className="absolute inset-8 border-4 border-green-300 rounded-full animate-spin border-b-transparent animate-reverse"></div>
             </div>
-            <p className="text-lg font-medium text-gray-700">Memuat Dashboard</p>
-            <p className="text-sm text-gray-500 mt-2">Sistem penyiraman otomatis</p>
+            {/* <p className="text-lg font-medium text-gray-700">Memuat Dashboard</p>
+            <p className="text-sm text-gray-500 mt-2">Sistem penyiraman otomatis</p> */}
           </div>
         </div>
       </div>
