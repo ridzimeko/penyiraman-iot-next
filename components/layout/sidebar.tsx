@@ -5,9 +5,6 @@ import { usePathname } from "next/navigation";
 import {
   Home,
   BarChart3,
-  Settings,
-  Calendar,
-  History,
   Droplets,
   Menu,
   X
@@ -30,21 +27,6 @@ const navigationItems = [
     name: "Kontrol",
     href: "/dashboard/control",
     icon: Droplets,
-  },
-  {
-    name: "Jadwal",
-    href: "/dashboard/schedule",
-    icon: Calendar,
-  },
-  {
-    name: "Riwayat",
-    href: "/dashboard/history",
-    icon: History,
-  },
-  {
-    name: "Pengaturan",
-    href: "/dashboard/settings",
-    icon: Settings,
   },
 ];
 
@@ -102,15 +84,6 @@ export default function Sidebar() {
               );
             })}
           </nav>
-
-          {/* System Status */}
-          <div className="mt-8 p-4 bg-blue-50 rounded-lg">
-            <p className="text-sm font-medium text-blue-800">Status Sistem</p>
-            <div className="flex items-center gap-2 mt-2">
-              <div className="h-2 w-2 bg-green-500 rounded-full animate-pulse"></div>
-              <p className="text-sm text-blue-600">Semua sistem berjalan normal</p>
-            </div>
-          </div>
         </div>
       </aside>
 

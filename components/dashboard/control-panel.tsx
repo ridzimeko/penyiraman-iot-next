@@ -81,16 +81,6 @@ export default function ControlPanel({
             </div>
           </ToggleGroupItem>
           
-          <ToggleGroupItem 
-            value="schedule" 
-            className="flex flex-col items-center justify-center h-24 gap-2 data-[state=on]:bg-purple-50 data-[state=on]:border-purple-200 data-[state=on]:text-purple-700"
-          >
-            <Clock className="h-6 w-6" />
-            <div className="text-center">
-              <p className="font-medium">Jadwal</p>
-              <p className="text-xs text-gray-500">Waktu tetap</p>
-            </div>
-          </ToggleGroupItem>
         </ToggleGroup>
       </div>
 

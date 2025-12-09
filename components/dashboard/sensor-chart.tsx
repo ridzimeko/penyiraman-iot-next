@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   LineChart,
   Line,
@@ -35,8 +35,12 @@ import {
   LineChart as LineChartIcon,
   TrendingUp
 } from "lucide-react";
-import { format } from "date-fns";
+import { format, subHours } from "date-fns";
 import { id } from "date-fns/locale";
+
+// Import Firebase
+import { database } from "@/lib/firebase";
+import { ref, onValue, get } from "firebase/database";
 
 // Type definitions
 interface SensorDataPoint {
@@ -45,8 +49,35 @@ interface SensorDataPoint {
   kelembaban: number;
   suhu: number;
   humidity: number;
-  pompa: number;
   pumpStatus: boolean;
+  soilMoisture?: number;
+  temperature?: number;
+  waterLevel?: number;
+  batteryLevel?: number;
+  phLevel?: number;
+  lightIntensity?: number;
+}
+
+interface FirebaseSensorData {
+  soilMoisture?: number;
+  temperature?: number;
+  humidity?: number;
+  pumpStatus?: boolean;
+  kelembaban?: number;
+  suhu?: number;
+  humidityAir?: number;
+  pompa?: boolean;
+  waterLevel?: number;
+  batteryLevel?: number;
+  phLevel?: number;
+  lightIntensity?: number;
+  light?: number;
+  water?: number;
+  battery?: number;
+  ph?: number;
+  timestamp?: number;
+  time?: number | string;
+  [key: string]: unknown; // Untuk properti lain yang mungkin ada
 }
 
 interface TimeRangeOption {
@@ -71,43 +102,6 @@ interface CustomTooltipProps {
   }>;
   label?: string;
 }
-
-// Mock data generator dengan tipe yang benar
-const generateMockData = (hours: number): SensorDataPoint[] => {
-  const data: SensorDataPoint[] = [];
-  const now = new Date();
-
-  for (let i = hours; i >= 0; i--) {
-    const time = new Date(now.getTime() - i * 60 * 60 * 1000);
-    const hour = time.getHours();
-
-    // Simulasi data yang realistis
-    const baseMoisture = 50;
-    const moistureVariation = Math.sin(hour * Math.PI / 12) * 20;
-    const soilMoisture = Math.max(20, Math.min(80, baseMoisture + moistureVariation + (Math.random() * 5 - 2.5)));
-
-    const baseTemp = 25;
-    const tempVariation = Math.sin((hour - 6) * Math.PI / 12) * 8;
-    const temperature = Math.max(20, Math.min(35, baseTemp + tempVariation + (Math.random() * 2 - 1)));
-
-    const humidity = Math.max(40, Math.min(90, 60 + Math.sin(hour * Math.PI / 6) * 20 + (Math.random() * 5 - 2.5)));
-
-    // Pompa aktif saat kelembaban rendah atau waktu tertentu
-    const pumpActive = soilMoisture < 35 || (hour >= 6 && hour <= 8) || (hour >= 16 && hour <= 18);
-
-    data.push({
-      waktu: format(time, "HH:mm", { locale: id }),
-      timestamp: time.getTime(),
-      kelembaban: Math.round(soilMoisture * 10) / 10,
-      suhu: Math.round(temperature * 10) / 10,
-      humidity: Math.round(humidity * 10) / 10,
-      pompa: pumpActive ? 1 : 0,
-      pumpStatus: pumpActive,
-    });
-  }
-
-  return data;
-};
 
 // Time range options
 const TIME_RANGES: TimeRangeOption[] = [
@@ -137,16 +131,34 @@ const CustomTooltip = ({ active, payload, label }: CustomTooltipProps) => {
 
           switch (entry.dataKey) {
             case "kelembaban":
+            case "soilMoisture":
               displayName = "Kelembaban Tanah";
               displayValue = `${entry.value}%`;
               break;
             case "suhu":
+            case "temperature":
               displayName = "Suhu";
               displayValue = `${entry.value}°C`;
               break;
             case "humidity":
               displayName = "Kelembaban Udara";
               displayValue = `${entry.value}%`;
+              break;
+            case "waterLevel":
+              displayName = "Tinggi Air";
+              displayValue = `${entry.value}%`;
+              break;
+            case "batteryLevel":
+              displayName = "Baterai";
+              displayValue = `${entry.value}%`;
+              break;
+            case "phLevel":
+              displayName = "pH Tanah";
+              displayValue = entry.value.toString();
+              break;
+            case "lightIntensity":
+              displayName = "Intensitas Cahaya";
+              displayValue = `${entry.value} lux`;
               break;
             default:
               displayName = entry.dataKey;
@@ -179,37 +191,308 @@ export default function SensorChart() {
     "kelembaban", "suhu", "humidity"
   ]);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [chartData, setChartData] = useState<SensorDataPoint[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const selectedRange = TIME_RANGES.find(range => range.value === timeRange) || TIME_RANGES[3];
-  const chartData: SensorDataPoint[] = generateMockData(selectedRange.hours);
+
+  // Helper function untuk parse timestamp
+  const parseTimestamp = (timestamp: unknown): number => {
+    if (typeof timestamp === 'number') {
+      return timestamp;
+    }
+    if (typeof timestamp === 'string') {
+      const parsed = Date.parse(timestamp);
+      return isNaN(parsed) ? Date.now() : parsed;
+    }
+    return Date.now();
+  };
+
+  // Helper function untuk get numeric value
+  const getNumericValue = (value: unknown, defaultValue: number = 0): number => {
+    if (typeof value === 'number') {
+      return value;
+    }
+    if (typeof value === 'string') {
+      const parsed = parseFloat(value);
+      return isNaN(parsed) ? defaultValue : parsed;
+    }
+    return defaultValue;
+  };
+
+  // Helper function untuk get boolean value
+  const getBooleanValue = (value: unknown): boolean => {
+    if (typeof value === 'boolean') {
+      return value;
+    }
+    if (typeof value === 'string') {
+      return value.toLowerCase() === 'true' || value === '1';
+    }
+    if (typeof value === 'number') {
+      return value !== 0;
+    }
+    return false;
+  };
+
+  // Fetch data dari Firebase
+  const fetchSensorData = async () => {
+    setIsLoading(true);
+    setIsRefreshing(true);
+    setError(null);
+
+    try {
+      // Coba beberapa path yang mungkin
+      const paths = [
+        "sensor_history",
+        "sensor_data/history",
+        "history",
+        "logs"
+      ];
+
+      let foundData = false;
+
+      for (const path of paths) {
+        try {
+          const historyRef = ref(database, path);
+          
+          // Coba ambil data
+          const snapshot = await get(historyRef);
+          const data = snapshot.val();
+
+          if (data) {
+            // Konversi data Firebase ke format chart
+            const chartDataArray: SensorDataPoint[] = [];
+            
+            Object.entries(data).forEach(([key, value]) => {
+              const entry = value as FirebaseSensorData;
+              const timestamp = parseTimestamp(entry.timestamp || entry.time || key);
+              const date = new Date(timestamp);
+
+              // Filter berdasarkan rentang waktu
+              const cutoffTime = subHours(new Date(), selectedRange.hours).getTime();
+              if (timestamp >= cutoffTime) {
+                const soilMoisture = getNumericValue(
+                  entry.soilMoisture || entry.kelembaban || entry.moisture,
+                  0
+                );
+                const temperature = getNumericValue(
+                  entry.temperature || entry.suhu,
+                  0
+                );
+                const humidity = getNumericValue(
+                  entry.humidity || entry.humidityAir,
+                  0
+                );
+                const pumpStatus = getBooleanValue(
+                  entry.pumpStatus || entry.pompa
+                );
+
+                chartDataArray.push({
+                  waktu: format(date, "HH:mm", { locale: id }),
+                  timestamp: timestamp,
+                  kelembaban: soilMoisture,
+                  suhu: temperature,
+                  humidity: humidity,
+                  pumpStatus: pumpStatus,
+                  waterLevel: getNumericValue(entry.waterLevel || entry.water),
+                  batteryLevel: getNumericValue(entry.batteryLevel || entry.battery),
+                  phLevel: getNumericValue(entry.phLevel || entry.ph),
+                  lightIntensity: getNumericValue(entry.lightIntensity || entry.light),
+                });
+              }
+            });
+
+            // Urutkan berdasarkan timestamp
+            const sortedData = chartDataArray.sort((a, b) => a.timestamp - b.timestamp);
+            
+            // Jika ada data, set dan keluar dari loop
+            if (sortedData.length > 0) {
+              setChartData(sortedData);
+              foundData = true;
+              break;
+            }
+          }
+        } catch (err) {
+          console.log(`Path ${path} tidak ada atau error:`, err);
+          continue;
+        }
+      }
+
+      // Jika tidak ada data di path manapun, gunakan data real-time
+      if (!foundData) {
+        await fetchCurrentData();
+      }
+
+    } catch (error) {
+      console.error("Error fetching sensor data:", error);
+      setError("Gagal memuat data sensor");
+      // Fallback ke data mock jika Firebase error
+      generateMockData();
+    } finally {
+      setIsLoading(false);
+      setIsRefreshing(false);
+    }
+  };
+
+  // Fetch data real-time jika tidak ada history
+  const fetchCurrentData = async () => {
+    try {
+      const currentRef = ref(database, "sensor_data");
+      const snapshot = await get(currentRef);
+      const data = snapshot.val() as FirebaseSensorData;
+
+      if (data) {
+        const timestamp = parseTimestamp(data.timestamp);
+        const date = new Date(timestamp);
+        
+        const chartDataArray: SensorDataPoint[] = Array.from({ length: 24 }, (_, i) => {
+          const time = subHours(date, i);
+          const soilMoisture = getNumericValue(data.soilMoisture || data.kelembaban, 0);
+          const temperature = getNumericValue(data.temperature || data.suhu, 0);
+          const humidity = getNumericValue(data.humidity || data.humidityAir, 0);
+          const pumpStatus = getBooleanValue(data.pumpStatus || data.pompa);
+
+          return {
+            waktu: format(time, "HH:mm", { locale: id }),
+            timestamp: time.getTime(),
+            kelembaban: soilMoisture,
+            suhu: temperature,
+            humidity: humidity,
+            pumpStatus: pumpStatus,
+            waterLevel: getNumericValue(data.waterLevel || data.water),
+            batteryLevel: getNumericValue(data.batteryLevel || data.battery),
+            phLevel: getNumericValue(data.phLevel || data.ph),
+            lightIntensity: getNumericValue(data.lightIntensity || data.light),
+          };
+        }).reverse();
+
+        setChartData(chartDataArray);
+      }
+    } catch (error) {
+      console.error("Error fetching current data:", error);
+      generateMockData();
+    }
+  };
+
+  // Fallback ke data mock
+  const generateMockData = () => {
+    const data: SensorDataPoint[] = [];
+    const now = new Date();
+
+    for (let i = selectedRange.hours; i >= 0; i--) {
+      const time = new Date(now.getTime() - i * 60 * 60 * 1000);
+      const hour = time.getHours();
+
+      // Simulasi data yang realistis
+      const baseMoisture = 50;
+      const moistureVariation = Math.sin(hour * Math.PI / 12) * 20;
+      const soilMoisture = Math.max(20, Math.min(80, baseMoisture + moistureVariation + (Math.random() * 5 - 2.5)));
+
+      const baseTemp = 25;
+      const tempVariation = Math.sin((hour - 6) * Math.PI / 12) * 8;
+      const temperature = Math.max(20, Math.min(35, baseTemp + tempVariation + (Math.random() * 2 - 1)));
+
+      const humidity = Math.max(40, Math.min(90, 60 + Math.sin(hour * Math.PI / 6) * 20 + (Math.random() * 5 - 2.5)));
+
+      // Pompa aktif saat kelembaban rendah
+      const pumpActive = soilMoisture < 35;
+
+      data.push({
+        waktu: format(time, "HH:mm", { locale: id }),
+        timestamp: time.getTime(),
+        kelembaban: Math.round(soilMoisture * 10) / 10,
+        suhu: Math.round(temperature * 10) / 10,
+        humidity: Math.round(humidity * 10) / 10,
+        pumpStatus: pumpActive,
+      });
+    }
+
+    setChartData(data);
+  };
+
+  // Setup real-time listener
+  useEffect(() => {
+    const sensorRef = ref(database, "sensor_data");
+    
+    const unsubscribe = onValue(sensorRef, (snapshot) => {
+      const data = snapshot.val() as FirebaseSensorData;
+      if (data && chartData.length > 0) {
+        // Update data terbaru dalam chart
+        const soilMoisture = getNumericValue(data.soilMoisture || data.kelembaban, 0);
+        const temperature = getNumericValue(data.temperature || data.suhu, 0);
+        const humidity = getNumericValue(data.humidity || data.humidityAir, 0);
+        const pumpStatus = getBooleanValue(data.pumpStatus || data.pompa);
+
+        const newDataPoint: SensorDataPoint = {
+          waktu: format(new Date(), "HH:mm", { locale: id }),
+          timestamp: Date.now(),
+          kelembaban: soilMoisture,
+          suhu: temperature,
+          humidity: humidity,
+          pumpStatus: pumpStatus,
+        };
+
+        // Tambahkan data baru dan hapus data terlama jika sudah lebih dari rentang waktu
+        const cutoffTime = subHours(new Date(), selectedRange.hours).getTime();
+        const filteredData = chartData.filter(item => item.timestamp >= cutoffTime);
+        
+        setChartData([...filteredData, newDataPoint].sort((a, b) => a.timestamp - b.timestamp));
+      }
+    });
+
+    return () => unsubscribe();
+  }, [chartData.length, selectedRange.hours]);
+
+  // Fetch data awal dan ketika rentang waktu berubah
+  useEffect(() => {
+    fetchSensorData();
+  }, [timeRange]);
 
   const handleRefresh = () => {
-    setIsRefreshing(true);
-    // Simulate API call
-    setTimeout(() => {
-      setIsRefreshing(false);
-    }, 1000);
+    fetchSensorData();
   };
 
   const downloadCSV = () => {
-    const headers = ["Waktu", "Kelembaban Tanah (%)", "Suhu (°C)", "Kelembaban Udara (%)", "Status Pompa"];
+    if (chartData.length === 0) return;
+
+    const headers = [
+      "Waktu",
+      "Timestamp",
+      "Kelembaban Tanah (%)",
+      "Suhu (°C)",
+      "Kelembaban Udara (%)",
+      "Status Pompa",
+      "Tinggi Air (%)",
+      "Level Baterai (%)",
+      "pH Tanah",
+      "Intensitas Cahaya (lux)"
+    ];
+
     const csvContent = [
       headers.join(","),
       ...chartData.map(row => [
         row.waktu,
+        row.timestamp,
         row.kelembaban,
         row.suhu,
         row.humidity,
-        row.pumpStatus ? "Menyala" : "Mati"
+        row.pumpStatus ? "Menyala" : "Mati",
+        row.waterLevel || "N/A",
+        row.batteryLevel || "N/A",
+        row.phLevel || "N/A",
+        row.lightIntensity || "N/A"
       ].join(","))
     ].join("\n");
 
-    const blob = new Blob([csvContent], { type: "text/csv" });
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
     a.download = `sensor-data-${format(new Date(), "yyyy-MM-dd-HH-mm")}.csv`;
+    document.body.appendChild(a);
     a.click();
+    document.body.removeChild(a);
     window.URL.revokeObjectURL(url);
   };
 
@@ -222,6 +505,47 @@ export default function SensorChart() {
   };
 
   const renderChart = () => {
+    if (isLoading) {
+      return (
+        <div className="h-[400px] flex items-center justify-center">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-600 mx-auto mb-4"></div>
+            <p className="text-gray-600">Memuat data chart...</p>
+          </div>
+        </div>
+      );
+    }
+
+    if (error) {
+      return (
+        <div className="h-[400px] flex flex-col items-center justify-center">
+          <div className="text-red-500 mb-4">
+            <svg className="h-12 w-12" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.77-.833-2.54 0L4.206 16.5c-.77.833.192 2.5 1.732 2.5z" />
+            </svg>
+          </div>
+          <p className="text-gray-700 mb-2">{error}</p>
+          <Button variant="outline" onClick={handleRefresh}>
+            Coba Lagi
+          </Button>
+        </div>
+      );
+    }
+
+    if (chartData.length === 0) {
+      return (
+        <div className="h-[400px] flex flex-col items-center justify-center">
+          <div className="text-gray-400 mb-4">
+            <svg className="h-12 w-12" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+          </div>
+          <p className="text-gray-600">Tidak ada data yang tersedia</p>
+          <p className="text-sm text-gray-500 mt-1">Pastikan sensor terhubung dan mengirim data</p>
+        </div>
+      );
+    }
+
     const chartProps = {
       data: chartData,
       margin: { top: 10, right: 30, left: 0, bottom: 0 }
@@ -392,6 +716,39 @@ export default function SensorChart() {
     );
   };
 
+  // Hitung statistik
+  const calculateStats = () => {
+    if (chartData.length === 0) {
+      return {
+        avgMoisture: 0,
+        maxMoisture: 0,
+        minMoisture: 0,
+        avgTemp: 0,
+        maxTemp: 0,
+        minTemp: 0,
+        pumpActiveCount: 0,
+        pumpStatus: false,
+      };
+    }
+
+    const moistures = chartData.map(d => d.kelembaban);
+    const temps = chartData.map(d => d.suhu);
+    const pumpActiveCount = chartData.filter(d => d.pumpStatus).length;
+
+    return {
+      avgMoisture: Math.round(moistures.reduce((a, b) => a + b, 0) / moistures.length),
+      maxMoisture: Math.max(...moistures),
+      minMoisture: Math.min(...moistures),
+      avgTemp: Math.round((temps.reduce((a, b) => a + b, 0) / temps.length) * 10) / 10,
+      maxTemp: Math.max(...temps),
+      minTemp: Math.min(...temps),
+      pumpActiveCount,
+      pumpStatus: chartData[chartData.length - 1]?.pumpStatus || false,
+    };
+  };
+
+  const stats = calculateStats();
+
   return (
     <Card>
       <CardHeader>
@@ -437,7 +794,7 @@ export default function SensorChart() {
               variant="outline"
               size="icon"
               onClick={handleRefresh}
-              disabled={isRefreshing}
+              disabled={isRefreshing || isLoading}
             >
               <RefreshCw className={`h-4 w-4 ${isRefreshing ? "animate-spin" : ""}`} />
             </Button>
@@ -446,6 +803,7 @@ export default function SensorChart() {
               variant="outline"
               size="icon"
               onClick={downloadCSV}
+              disabled={chartData.length === 0}
             >
               <Download className="h-4 w-4" />
             </Button>
@@ -455,11 +813,28 @@ export default function SensorChart() {
 
       <CardContent>
         <div className="space-y-6">
+          {/* Info Status */}
+          {isLoading ? (
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+              <div className="flex items-center gap-2">
+                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
+                <p className="text-blue-700">Memuat data dari Firebase...</p>
+              </div>
+            </div>
+          ) : error ? (
+            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+              <div className="flex items-center gap-2">
+                <svg className="h-5 w-5 text-yellow-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.77-.833-2.54 0L4.206 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                </svg>
+                <p className="text-yellow-700">{error} - Menggunakan data simulasi</p>
+              </div>
+            </div>
+          ) : null}
+
           {/* Chart Container */}
           <div className="h-[400px]">
-            <ResponsiveContainer width="100%" height="100%">
-              {renderChart()}
-            </ResponsiveContainer>
+            {renderChart()}
           </div>
 
           {/* Sensor Toggles */}
@@ -469,6 +844,7 @@ export default function SensorChart() {
               size="sm"
               className="gap-2"
               onClick={() => toggleSensor("kelembaban")}
+              disabled={isLoading}
             >
               <Droplets className="h-4 w-4" />
               Kelembaban Tanah
@@ -479,6 +855,7 @@ export default function SensorChart() {
               size="sm"
               className="gap-2"
               onClick={() => toggleSensor("suhu")}
+              disabled={isLoading}
             >
               <Thermometer className="h-4 w-4" />
               Suhu
@@ -489,6 +866,7 @@ export default function SensorChart() {
               size="sm"
               className="gap-2"
               onClick={() => toggleSensor("humidity")}
+              disabled={isLoading}
             >
               <Cloud className="h-4 w-4" />
               Kelembaban Udara
@@ -506,25 +884,31 @@ export default function SensorChart() {
                 <div>
                   <p className="text-sm text-gray-600">Rata-rata</p>
                   <p className="text-xl font-bold">
-                    {Math.round(chartData.reduce((sum, d) => sum + d.kelembaban, 0) / chartData.length)}%
+                    {stats.avgMoisture}%
                   </p>
                 </div>
                 <div>
                   <p className="text-sm text-gray-600">Tertinggi</p>
                   <p className="text-xl font-bold">
-                    {Math.max(...chartData.map(d => d.kelembaban))}%
+                    {stats.maxMoisture}%
                   </p>
                 </div>
                 <div>
                   <p className="text-sm text-gray-600">Terendah</p>
                   <p className="text-xl font-bold">
-                    {Math.min(...chartData.map(d => d.kelembaban))}%
+                    {stats.minMoisture}%
                   </p>
                 </div>
                 <div>
                   <p className="text-sm text-gray-600">Trend</p>
-                  <p className="text-xl font-bold text-green-600">
-                    {chartData[chartData.length - 1].kelembaban > chartData[0].kelembaban ? "↑" : "↓"}
+                  <p className={`text-xl font-bold ${
+                    chartData.length > 1 && 
+                    chartData[chartData.length - 1].kelembaban > chartData[0].kelembaban 
+                      ? "text-green-600" 
+                      : "text-red-600"
+                  }`}>
+                    {chartData.length > 1 && 
+                     chartData[chartData.length - 1].kelembaban > chartData[0].kelembaban ? "↑" : "↓"}
                   </p>
                 </div>
               </div>
@@ -539,25 +923,31 @@ export default function SensorChart() {
                 <div>
                   <p className="text-sm text-gray-600">Rata-rata</p>
                   <p className="text-xl font-bold">
-                    {Math.round(chartData.reduce((sum, d) => sum + d.suhu, 0) / chartData.length)}°C
+                    {stats.avgTemp}°C
                   </p>
                 </div>
                 <div>
                   <p className="text-sm text-gray-600">Tertinggi</p>
                   <p className="text-xl font-bold">
-                    {Math.max(...chartData.map(d => d.suhu))}°C
+                    {stats.maxTemp}°C
                   </p>
                 </div>
                 <div>
                   <p className="text-sm text-gray-600">Terendah</p>
                   <p className="text-xl font-bold">
-                    {Math.min(...chartData.map(d => d.suhu))}°C
+                    {stats.minTemp}°C
                   </p>
                 </div>
                 <div>
                   <p className="text-sm text-gray-600">Trend</p>
-                  <p className="text-xl font-bold text-red-600">
-                    {chartData[chartData.length - 1].suhu > chartData[0].suhu ? "↑" : "↓"}
+                  <p className={`text-xl font-bold ${
+                    chartData.length > 1 && 
+                    chartData[chartData.length - 1].suhu > chartData[0].suhu 
+                      ? "text-red-600" 
+                      : "text-blue-600"
+                  }`}>
+                    {chartData.length > 1 && 
+                     chartData[chartData.length - 1].suhu > chartData[0].suhu ? "↑" : "↓"}
                   </p>
                 </div>
               </div>
@@ -572,29 +962,39 @@ export default function SensorChart() {
                 <div>
                   <p className="text-sm text-gray-600">Status</p>
                   <p className="text-xl font-bold">
-                    {chartData[chartData.length - 1].pumpStatus ? "Menyala" : "Mati"}
+                    {stats.pumpStatus ? "Menyala" : "Mati"}
                   </p>
                 </div>
                 <div>
                   <p className="text-sm text-gray-600">Aktivitas</p>
                   <p className="text-xl font-bold">
-                    {chartData.filter(d => d.pumpStatus).length}x
+                    {stats.pumpActiveCount}x
                   </p>
                 </div>
                 <div>
                   <p className="text-sm text-gray-600">Durasi Total</p>
                   <p className="text-xl font-bold">
-                    {Math.round(chartData.filter(d => d.pumpStatus).length * 5)}m
+                    {Math.round(stats.pumpActiveCount * 5)}m
                   </p>
                 </div>
                 <div>
                   <p className="text-sm text-gray-600">Terakhir</p>
                   <p className="text-xl font-bold">
-                    {chartData.filter(d => d.pumpStatus).length > 0 ? "Aktif" : "-"}
+                    {stats.pumpActiveCount > 0 ? "Aktif" : "-"}
                   </p>
                 </div>
               </div>
             </div>
+          </div>
+
+          {/* Info Tambahan */}
+          <div className="text-center text-sm text-gray-500">
+            <p>
+              Data terakhir diperbarui: {chartData.length > 0 
+                ? format(new Date(chartData[chartData.length - 1].timestamp), "dd/MM/yyyy HH:mm") 
+                : "Tidak tersedia"} •
+              Total data: {chartData.length} titik
+            </p>
           </div>
         </div>
       </CardContent>

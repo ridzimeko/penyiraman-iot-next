@@ -1,52 +1,13 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Badge } from "@/components/ui/badge";
-import { Slider } from "@/components/ui/slider";
+import { Tabs, TabsContent } from "@/components/ui/tabs";
 import {
-  Droplets,
   Clock,
-  Settings,
-  StopCircle,
-  Timer,
-  RotateCcw,
-  Power
 } from "lucide-react";
 import ControlPanel from "@/components/dashboard/control-panel";
 import SensorChart from "@/components/dashboard/sensor-chart";
-
-// Type definitions
-interface Zone {
-  id: string;
-  name: string;
-  status: "active" | "inactive" | "error";
-  moisture: number;
-  temperature: number;
-  duration: number;
-  valveStatus: boolean;
-  lastWatered: Date;
-}
-
-interface Schedule {
-  id: string;
-  name: string;
-  time: string;
-  duration: number;
-  days: string[];
-  zones: string[];
-  enabled: boolean;
-}
-
-interface ControlLog {
-  id: string;
-  action: string;
-  user: string;
-  timestamp: Date;
-  details: string;
-}
 
 const mockSensorData = {
   soilMoisture: 45.7,
@@ -72,131 +33,6 @@ export default function ControlPage() {
   const [sensorData, setSensorData] = useState(mockSensorData);
   const [isLoading, setIsLoading] = useState(false);
 
-  // Initialize state with mock data
-  const [zones, setZones] = useState<Zone[]>([
-    {
-      id: "zone_1",
-      name: "Taman Depan",
-      status: "active",
-      moisture: 45.7,
-      temperature: 28.5,
-      duration: 10,
-      valveStatus: false,
-      lastWatered: new Date()
-    },
-    {
-      id: "zone_2",
-      name: "Taman Belakang",
-      status: "inactive",
-      moisture: 28.3,
-      temperature: 27.8,
-      duration: 15,
-      valveStatus: false,
-      lastWatered: new Date()
-    },
-    {
-      id: "zone_3",
-      name: "Green House",
-      status: "active",
-      moisture: 65.2,
-      temperature: 30.2,
-      duration: 8,
-      valveStatus: true,
-      lastWatered: new Date()
-    },
-    {
-      id: "zone_4",
-      name: "Kebun Sayur",
-      status: "error",
-      moisture: 0,
-      temperature: 25.5,
-      duration: 12,
-      valveStatus: false,
-      lastWatered: new Date()
-    }
-  ]);
-
-  const [schedules, setSchedules] = useState<Schedule[]>([
-    {
-      id: "schedule_1",
-      name: "Penyiraman Pagi",
-      time: "06:00",
-      duration: 10,
-      days: ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"],
-      zones: ["zone_1", "zone_2"],
-      enabled: true
-    },
-    {
-      id: "schedule_2",
-      name: "Penyiraman Sore",
-      time: "17:00",
-      duration: 15,
-      days: ["Senin", "Rabu", "Jumat"],
-      zones: ["zone_1", "zone_3"],
-      enabled: true
-    },
-    {
-      id: "schedule_3",
-      name: "Penyiraman Malam",
-      time: "20:00",
-      duration: 8,
-      days: ["Sabtu", "Minggu"],
-      zones: ["zone_2"],
-      enabled: false
-    }
-  ]);
-
-  const [logs, setLogs] = useState<ControlLog[]>([
-    {
-      id: "log_1",
-      action: "Manual Start",
-      user: "Admin",
-      timestamp: new Date(),
-      details: "Zone 3 - Green House, Durasi: 8 menit"
-    },
-    {
-      id: "log_2",
-      action: "Schedule Triggered",
-      user: "System",
-      timestamp: new Date(),
-      details: "Penyiraman Pagi, Zone 1 & 2, Durasi: 10 menit"
-    },
-    {
-      id: "log_3",
-      action: "Valve Error",
-      user: "System",
-      timestamp: new Date(),
-      details: "Zone 4 - Kebun Sayur, Valve tidak merespons"
-    },
-    {
-      id: "log_4",
-      action: "Manual Stop",
-      user: "Admin",
-      timestamp: new Date(),
-      details: "Zone 1 - Taman Depan, Emergency stop"
-    }
-  ]);
-
-  const [systemMode, setSystemMode] = useState<"auto" | "manual" | "schedule">("auto");
-  const [wateringDuration, setWateringDuration] = useState(10);
-  const [isWatering, setIsWatering] = useState(false);
-  const [currentTime] = useState(new Date());
-
-  const stopAllWatering = useCallback(() => {
-    setZones(prev => prev.map(zone => ({ ...zone, valveStatus: false })));
-    setIsWatering(false);
-
-    // Add log entry
-    setLogs(prev => [{
-      id: `log_${Date.now()}`,
-      action: "Emergency Stop",
-      user: "Admin",
-      timestamp: new Date(),
-      details: "Semua zona dihentikan"
-    }, ...prev.slice(0, 9)]);
-  }, []);
-
-
     const handleManualControl = async (action: "ON" | "OFF") => {
     setIsLoading(true);
     // Simulasi API call delay
@@ -209,78 +45,14 @@ export default function ControlPage() {
     }, 1000);
   };
 
-  const resetSystem = useCallback(() => {
-    setZones(prev => prev.map(zone => ({
-      ...zone,
-      valveStatus: false
-    })));
-    setIsWatering(false);
-
-    // Add log entry
-    setLogs(prev => [{
-      id: `log_${Date.now()}`,
-      action: "System Reset",
-      user: "Admin",
-      timestamp: new Date(),
-      details: "Semua valve ditutup, sistem direset"
-    }, ...prev.slice(0, 9)]);
-  }, []);
-
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-bold text-gray-900">Kontrol Sistem</h1>
-          <p className="text-gray-600">
-            Kontrol manual dan pengaturan sistem penyiraman
-          </p>
-        </div>
-
-        <div className="flex flex-wrap gap-2">
-          <Button
-            variant={isWatering ? "destructive" : "default"}
-            onClick={stopAllWatering}
-            className="gap-2"
-            disabled={!isWatering}
-          >
-            <StopCircle className="h-4 w-4" />
-            Stop Semua
-          </Button>
-
-          <Button
-            variant="outline"
-            onClick={resetSystem}
-            className="gap-2"
-          >
-            <RotateCcw className="h-4 w-4" />
-            Reset Sistem
-          </Button>
-        </div>
-      </div>
 
       {/* Main Control Tabs */}
       <Tabs defaultValue="control" className="space-y-4">
-        <TabsList className="grid grid-cols-3 w-full max-w-md">
-          <TabsTrigger value="control" className="flex items-center gap-2">
-            <Power className="h-4 w-4" />
-            Kontrol
-          </TabsTrigger>
-          <TabsTrigger value="chart" className="flex items-center gap-2">
-            <Droplets className="h-4 w-4" />
-            Grafik
-          </TabsTrigger>
-          <TabsTrigger value="activity" className="flex items-center gap-2">
-            <Clock className="h-4 w-4" />
-            Aktivitas
-          </TabsTrigger>
-        </TabsList>
 
         <TabsContent value="control">
           <Card>
-            <CardHeader>
-              <CardTitle>Kontrol Sistem</CardTitle>
-            </CardHeader>
             <CardContent>
               <ControlPanel
                 currentMode="auto"

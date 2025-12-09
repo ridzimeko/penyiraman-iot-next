@@ -15,70 +15,381 @@ import {
   AlertCircle,
   Clock,
   Zap,
-  Sun,
-  CloudRain
+  RefreshCw,
 } from "lucide-react";
 
-// Mock data untuk development
-const mockSensorData = {
-  soilMoisture: 45.7,
-  temperature: 28.5,
-  humidity: 65.2,
-  pumpStatus: false,
-  waterLevel: 85,
-  batteryLevel: 92,
-  timestamp: new Date(),
-  phLevel: 6.8,
-  lightIntensity: 850
-};
+// Import Firebase Realtime Database
+import { database } from "@/lib/firebase";
+import { ref, onValue, set, update, get } from "firebase/database";
 
-const mockRecentActivities = [
-  { id: 1, action: "Penyiraman otomatis", time: "10:30", duration: "5 menit", status: "completed" },
-  { id: 2, action: "Sensor membaca data", time: "10:25", value: "Kelembaban: 42%", status: "completed" },
-  { id: 3, action: "Mode diubah ke Otomatis", time: "09:45", user: "Admin", status: "completed" },
-  { id: 4, action: "Penyiraman jadwal", time: "06:00", duration: "10 menit", status: "completed" },
-  { id: 5, action: "Peringatan: Kelembaban rendah", time: "05:30", status: "warning" },
-];
+// Types untuk data sensor
+interface SensorData {
+  soilMoisture: number;
+  temperature: number;
+  humidity: number;
+  pumpStatus: boolean;
+  waterLevel: number;
+  batteryLevel: number;
+  timestamp: number;
+  phLevel?: number;
+  lightIntensity?: number;
+  [key: string]: unknown;
+}
 
-const mockWeatherData = {
-  condition: "Cerah Berawan",
-  temperature: 30,
-  humidity: 65,
-  rainChance: 20,
-  icon: "partly-cloudy"
-};
+interface Activity {
+  id: string;
+  action: string;
+  time: string;
+  duration?: string;
+  user?: string;
+  status: string;
+  value?: string;
+  timestamp: number;
+}
+
+interface TodayStats {
+  wateringCount: number;
+  totalDuration: number;
+  waterUsed: number;
+  warnings: number;
+}
 
 export default function DashboardPage() {
-  const [sensorData, setSensorData] = useState(mockSensorData);
-  const [isLoading, setIsLoading] = useState(false);
-  const [systemStatus, setSystemStatus] = useState("normal");
+  const [sensorData, setSensorData] = useState<SensorData>({
+    soilMoisture: 0,
+    temperature: 0,
+    humidity: 0,
+    pumpStatus: false,
+    waterLevel: 0,
+    batteryLevel: 0,
+    timestamp: Date.now(),
+    phLevel: 0,
+    lightIntensity: 0,
+  });
 
-  // Simulasi real-time updates
+  const [recentActivities, setRecentActivities] = useState<Activity[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [connectionStatus, setConnectionStatus] = useState<"connecting" | "connected" | "disconnected">("connecting");
+  const [todayStats, setTodayStats] = useState<TodayStats>({
+    wateringCount: 0,
+    totalDuration: 0,
+    waterUsed: 0,
+    warnings: 0,
+  });
+  const [autoReload, setAutoReload] = useState(true);
+  const [lastReloadTime, setLastReloadTime] = useState(Date.now());
+
+  // Helper function untuk mendapatkan mock data
+  const getMockData = (): SensorData => {
+    return {
+      soilMoisture: 45.5 + Math.random() * 10,
+      temperature: 27 + Math.random() * 3,
+      humidity: 65 + Math.random() * 10,
+      pumpStatus: false,
+      waterLevel: 75,
+      batteryLevel: 85,
+      timestamp: Date.now(),
+      phLevel: 6.5,
+      lightIntensity: 450,
+    };
+  };
+
+  // Retry mechanism untuk koneksi Firebase
+  const connectToFirebase = async (retryCount = 0) => {
+    const maxRetries = 3;
+
+    try {
+      setConnectionStatus("connecting");
+      setError(null);
+
+      // Test koneksi dengan membaca data sekali
+      const sensorRef = ref(database, "sensor_data");
+      const snapshot = await get(sensorRef);
+
+      if (snapshot.exists()) {
+        const data = snapshot.val() as Partial<SensorData>;
+        setSensorData(prev => ({
+          ...prev,
+          ...data,
+          timestamp: data.timestamp || Date.now(),
+        }));
+        setConnectionStatus("connected");
+        setIsLoading(false);
+        return true;
+      } else {
+        // Jika tidak ada data, gunakan mock data
+        console.warn("No data in Firebase, using mock data");
+        setSensorData(getMockData());
+        setConnectionStatus("connected");
+        setIsLoading(false);
+        return true;
+      }
+    } catch (err) {
+      console.error("Firebase connection error:", err);
+
+      if (retryCount < maxRetries) {
+        console.log(`Retrying connection... (${retryCount + 1}/${maxRetries})`);
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        return connectToFirebase(retryCount + 1);
+      } else {
+        setError("Tidak dapat terhubung ke Firebase. Menggunakan data simulasi.");
+        setSensorData(getMockData());
+        setConnectionStatus("disconnected");
+        setIsLoading(false);
+        return false;
+      }
+    }
+  };
+
+  // Real-time listener untuk data sensor
   useEffect(() => {
-    const interval = setInterval(() => {
-      // Update data secara acak untuk simulasi
-      setSensorData(prev => ({
-        ...prev,
-        soilMoisture: Math.max(20, Math.min(80, prev.soilMoisture + (Math.random() * 2 - 1))),
-        temperature: Math.max(22, Math.min(35, prev.temperature + (Math.random() * 0.5 - 0.25))),
-        humidity: Math.max(40, Math.min(90, prev.humidity + (Math.random() * 2 - 1))),
-        timestamp: new Date(),
-      }));
-    }, 5000);
+    let unsubscribe: (() => void) | null = null;
 
-    return () => clearInterval(interval);
+    const setupListener = async () => {
+      const connected = await connectToFirebase();
+
+      if (connected) {
+        const sensorRef = ref(database, "sensor_data");
+
+        unsubscribe = onValue(sensorRef, (snapshot) => {
+          const data = snapshot.val() as Partial<SensorData>;
+          if (data) {
+            setSensorData(prev => ({
+              ...prev,
+              ...data,
+              timestamp: data.timestamp || Date.now(),
+            }));
+            setConnectionStatus("connected");
+          }
+        }, (error) => {
+          console.error("Error in sensor listener:", error);
+          setConnectionStatus("disconnected");
+          setError("Koneksi terputus. Menggunakan data terakhir.");
+        });
+      }
+    };
+
+    setupListener();
+
+    // Cleanup
+    return () => {
+      if (unsubscribe) {
+        unsubscribe();
+      }
+    };
+  }, []);
+
+  // Update mock data setiap 5 detik jika disconnected
+  useEffect(() => {
+    if (connectionStatus === "disconnected") {
+      const interval = setInterval(() => {
+        setSensorData(prev => ({
+          ...prev,
+          soilMoisture: 45.5 + Math.random() * 10,
+          temperature: 27 + Math.random() * 3,
+          humidity: 65 + Math.random() * 10,
+          timestamp: Date.now(),
+        }));
+      }, 5000);
+
+      return () => clearInterval(interval);
+    }
+  }, [connectionStatus]);
+
+  // Auto reload data setiap 30 detik
+  useEffect(() => {
+    if (!autoReload) return;
+
+    const reloadInterval = setInterval(async () => {
+      console.log("Auto reloading data...");
+      setLastReloadTime(Date.now());
+
+      // Refresh sensor data
+      try {
+        const sensorRef = ref(database, "sensor_data");
+        const snapshot = await get(sensorRef);
+
+        if (snapshot.exists()) {
+          const data = snapshot.val() as Partial<SensorData>;
+          setSensorData(prev => ({
+            ...prev,
+            ...data,
+            timestamp: data.timestamp || Date.now(),
+          }));
+          setConnectionStatus("connected");
+        }
+      } catch (error) {
+        console.error("Auto reload error:", error);
+      }
+    }, 30000); // Reload setiap 30 detik
+
+    return () => clearInterval(reloadInterval);
+  }, [autoReload]);
+
+  // Fetch data statistik
+  useEffect(() => {
+    const today = new Date().toISOString().split('T')[0];
+    const statsRef = ref(database, `stats/${today}`);
+
+    const unsubscribe = onValue(statsRef, (snapshot) => {
+      const data = snapshot.val();
+      if (data) {
+        setTodayStats({
+          wateringCount: data.wateringCount || 0,
+          totalDuration: data.totalDuration || 0,
+          waterUsed: data.waterUsed || 0,
+          warnings: data.warnings || 0,
+        });
+      }
+    }, (error) => {
+      console.error("Error fetching stats:", error);
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  // Fetch aktivitas terbaru
+  useEffect(() => {
+    const activitiesRef = ref(database, "activities");
+
+    const unsubscribe = onValue(activitiesRef, (snapshot) => {
+      const data = snapshot.val();
+      if (data) {
+        const activitiesArray: Activity[] = [];
+        Object.entries(data).forEach(([key, value]) => {
+          const activity = value as Omit<Activity, 'id'>;
+          activitiesArray.push({
+            id: key,
+            ...activity,
+          });
+        });
+
+        const sortedActivities = activitiesArray
+          .sort((a, b) => b.timestamp - a.timestamp)
+          .slice(0, 5);
+
+        setRecentActivities(sortedActivities);
+      }
+    }, (error) => {
+      console.error("Error fetching activities:", error);
+    });
+
+    return () => unsubscribe();
   }, []);
 
   const handleManualControl = async (action: "ON" | "OFF") => {
+    if (connectionStatus === "disconnected") {
+      alert("Tidak dapat mengontrol pompa. Koneksi terputus.");
+      return;
+    }
+
     setIsLoading(true);
-    // Simulasi API call delay
-    setTimeout(() => {
+    try {
+      const pumpRef = ref(database, "controls/pump");
+      await update(pumpRef, {
+        status: action === "ON",
+        mode: "manual",
+        lastUpdated: Date.now(),
+        updatedBy: "dashboard",
+      });
+
+      const activityId = Date.now().toString();
+      const activityRef = ref(database, `activities/${activityId}`);
+      await set(activityRef, {
+        action: action === "ON" ? "Pompa dinyalakan manual" : "Pompa dimatikan manual",
+        time: new Date().toLocaleTimeString('id-ID'),
+        user: "Admin",
+        status: "completed",
+        timestamp: Date.now(),
+      });
+
       setSensorData(prev => ({
         ...prev,
         pumpStatus: action === "ON",
       }));
+
+      if (action === "ON") {
+        const today = new Date().toISOString().split('T')[0];
+        const statsRef = ref(database, `stats/${today}`);
+
+        const snapshot = await get(statsRef);
+        const currentStats = snapshot.val() || {};
+
+        await update(statsRef, {
+          wateringCount: (currentStats.wateringCount || 0) + 1,
+          lastUpdated: Date.now(),
+        });
+      }
+
+    } catch (error) {
+      console.error("Error updating pump status:", error);
+      alert("Gagal mengontrol pompa: " + (error as Error).message);
+    } finally {
       setIsLoading(false);
-    }, 1000);
+    }
+  };
+
+  const handleQuickWater = async () => {
+    if (connectionStatus === "disconnected") {
+      alert("Tidak dapat memulai penyiraman. Koneksi terputus.");
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const quickWaterRef = ref(database, "controls/quickWater");
+      await set(quickWaterRef, {
+        duration: 5,
+        startTime: Date.now(),
+        status: "active",
+      });
+
+      const activityId = `${Date.now()}_quick`;
+      const activityRef = ref(database, `activities/${activityId}`);
+      await set(activityRef, {
+        action: "Penyiraman cepat 5 menit",
+        time: new Date().toLocaleTimeString('id-ID'),
+        duration: "5 menit",
+        user: "Admin",
+        status: "completed",
+        timestamp: Date.now(),
+      });
+
+      const today = new Date().toISOString().split('T')[0];
+      const statsRef = ref(database, `stats/${today}`);
+
+      const snapshot = await get(statsRef);
+      const currentStats = snapshot.val() || {};
+
+      await update(statsRef, {
+        wateringCount: (currentStats.wateringCount || 0) + 1,
+        totalDuration: (currentStats.totalDuration || 0) + 5,
+        waterUsed: (currentStats.waterUsed || 0) + 15,
+        lastUpdated: Date.now(),
+      });
+
+    } catch (error) {
+      console.error("Error starting quick water:", error);
+      alert("Gagal memulai penyiraman: " + (error as Error).message);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleRetry = () => {
+    setIsLoading(true);
+    setError(null);
+    connectToFirebase();
+  };
+
+  const toggleAutoReload = () => {
+    setAutoReload(!autoReload);
+  };
+
+  const handleManualReload = async () => {
+    setLastReloadTime(Date.now());
+    await connectToFirebase();
   };
 
   const getStatusColor = (moisture: number) => {
@@ -93,48 +404,97 @@ export default function DashboardPage() {
     return "Basah";
   };
 
+  const formatTime = (timestamp: number) => {
+    return new Date(timestamp).toLocaleTimeString('id-ID', {
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  };
+
+  // Loading state dengan retry button
+  if (isLoading && sensorData.soilMoisture === 0) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-600 mx-auto"></div>
+          <p className="mt-4 text-gray-600">Menghubungkan ke Firebase...</p>
+          {error && (
+            <div className="mt-4">
+              <p className="text-red-600 text-sm">{error}</p>
+              <Button onClick={handleRetry} className="mt-2">
+                <RefreshCw className="h-4 w-4 mr-2" />
+                Coba Lagi
+              </Button>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
-      {/* Header dengan Weather Info */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-bold text-gray-900">Dashboard</h1>
-          <p className="text-gray-600">
-            Monitoring dan kontrol sistem penyiraman otomatis
-          </p>
+      {/* Auto Reload Control Banner */}
+      <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className={`h-3 w-3 rounded-full ${autoReload ? 'bg-green-500 animate-pulse' : 'bg-gray-400'}`} />
+            <div>
+              <p className="font-medium text-blue-900">
+                Auto Reload: {autoReload ? 'Aktif' : 'Nonaktif'}
+              </p>
+              <p className="text-xs text-blue-700">
+                {autoReload ? 'Data diperbarui otomatis setiap 30 detik' : 'Reload manual diperlukan'}
+                {' • Terakhir: '}
+                {formatTime(lastReloadTime)}
+              </p>
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleManualReload}
+              disabled={isLoading}
+              className="gap-2"
+            >
+              <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
+              Reload Sekarang
+            </Button>
+            <Button
+              variant={autoReload ? "default" : "outline"}
+              size="sm"
+              onClick={toggleAutoReload}
+              className="gap-2"
+            >
+              <Zap className="h-4 w-4" />
+              {autoReload ? 'Auto ON' : 'Auto OFF'}
+            </Button>
+          </div>
         </div>
-
-        {/* Weather Card */}
-        <Card className="md:w-auto w-full">
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="h-10 w-10 bg-blue-100 rounded-full flex items-center justify-center">
-                  {mockWeatherData.icon === "partly-cloudy" ? (
-                    <Cloud className="h-5 w-5 text-blue-600" />
-                  ) : mockWeatherData.icon === "sunny" ? (
-                    <Sun className="h-5 w-5 text-yellow-600" />
-                  ) : (
-                    <CloudRain className="h-5 w-5 text-gray-600" />
-                  )}
-                </div>
-                <div>
-                  <p className="text-sm text-gray-500">Cuaca Sekarang</p>
-                  <p className="font-semibold">{mockWeatherData.condition}</p>
-                </div>
-              </div>
-              <div className="text-right">
-                <p className="text-2xl font-bold">{mockWeatherData.temperature}°C</p>
-                <p className="text-sm text-gray-500">{mockWeatherData.humidity}% kelembaban</p>
-              </div>
-            </div>
-            <div className="mt-2 flex items-center gap-2 text-sm text-gray-500">
-              <AlertCircle className="h-4 w-4" />
-              <span>Kemungkinan hujan: {mockWeatherData.rainChance}%</span>
-            </div>
-          </CardContent>
-        </Card>
       </div>
+
+      {/* Connection Status Banner */}
+      {connectionStatus === "disconnected" && (
+        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+          <div className="flex items-start gap-3">
+            <AlertCircle className="h-5 w-5 text-yellow-600 mt-0.5" />
+            <div className="flex-1">
+              <p className="font-medium text-yellow-800">Mode Offline</p>
+              <p className="text-sm text-yellow-700 mt-1">
+                Koneksi ke Firebase terputus. Menampilkan data simulasi.
+                <Button
+                  variant="link"
+                  className="h-auto p-0 text-yellow-800 ml-1"
+                  onClick={handleRetry}
+                >
+                  Coba sambungkan kembali
+                </Button>
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Status Overview Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -197,125 +557,12 @@ export default function DashboardPage() {
         />
       </div>
 
-      {/* Additional Status Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        <Card>
-          <CardHeader className="pb-2">
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-sm font-medium text-gray-600">
-                Level Air
-              </CardTitle>
-              <Droplets className="h-4 w-4 text-blue-500" />
-            </div>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-2xl font-bold">{sensorData.waterLevel}%</span>
-                <span className={`text-sm font-medium ${sensorData.waterLevel < 30 ? 'text-red-600' :
-                  sensorData.waterLevel < 50 ? 'text-yellow-600' :
-                    'text-green-600'
-                  }`}>
-                  {sensorData.waterLevel < 30 ? 'Rendah' :
-                    sensorData.waterLevel < 50 ? 'Cukup' :
-                      'Penuh'}
-                </span>
-              </div>
-              <div className="h-2 w-full bg-gray-200 rounded-full overflow-hidden">
-                <div
-                  className={`h-full ${sensorData.waterLevel < 30 ? 'bg-red-500' :
-                    sensorData.waterLevel < 50 ? 'bg-yellow-500' :
-                      'bg-green-500'
-                    }`}
-                  style={{ width: `${sensorData.waterLevel}%` }}
-                />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-2">
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-sm font-medium text-gray-600">
-                Baterai
-              </CardTitle>
-              <Zap className="h-4 w-4 text-green-500" />
-            </div>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-2xl font-bold">{sensorData.batteryLevel}%</span>
-                <span className="text-sm font-medium text-green-600">
-                  {sensorData.batteryLevel > 80 ? 'Penuh' :
-                    sensorData.batteryLevel > 30 ? 'Normal' :
-                      'Rendah'}
-                </span>
-              </div>
-              <div className="h-2 w-full bg-gray-200 rounded-full overflow-hidden">
-                <div
-                  className={`h-full ${sensorData.batteryLevel < 30 ? 'bg-red-500' :
-                    sensorData.batteryLevel < 80 ? 'bg-yellow-500' :
-                      'bg-green-500'
-                    }`}
-                  style={{ width: `${sensorData.batteryLevel}%` }}
-                />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-2">
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-sm font-medium text-gray-600">
-                Status Sistem
-              </CardTitle>
-              <div className={`h-2 w-2 rounded-full ${systemStatus === 'normal' ? 'bg-green-500' :
-                systemStatus === 'warning' ? 'bg-yellow-500' :
-                  'bg-red-500'
-                } animate-pulse`} />
-            </div>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="text-lg font-semibold">
-                  {systemStatus === 'normal' ? 'Semua Normal' :
-                    systemStatus === 'warning' ? 'Perhatian' :
-                      'Ada Masalah'}
-                </span>
-                <span className={`text-sm px-2 py-1 rounded ${systemStatus === 'normal' ? 'bg-green-100 text-green-800' :
-                  systemStatus === 'warning' ? 'bg-yellow-100 text-yellow-800' :
-                    'bg-red-100 text-red-800'
-                  }`}>
-                  {systemStatus === 'normal' ? 'Aktif' :
-                    systemStatus === 'warning' ? 'Warning' :
-                      'Error'}
-                </span>
-              </div>
-              <p className="text-sm text-gray-500">
-                {systemStatus === 'normal' ? 'Semua sensor berfungsi normal' :
-                  systemStatus === 'warning' ? 'Ada sensor yang perlu perhatian' :
-                    'Terdeteksi masalah pada sistem'}
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
       {/* Main Content Tabs */}
       <Tabs defaultValue="chart" className="space-y-4">
-        <TabsList className="grid grid-cols-3 w-full max-w-md">
-          <TabsTrigger value="chart" className="flex items-center gap-2">
-            <Droplets className="h-4 w-4" />
-            Grafik
-          </TabsTrigger>
-          <TabsTrigger value="activity" className="flex items-center gap-2">
-            <Clock className="h-4 w-4" />
-            Aktivitas
-          </TabsTrigger>
+        <TabsList>
+          <TabsTrigger value="chart">Grafik</TabsTrigger>
+          <TabsTrigger value="control">Kontrol</TabsTrigger>
+          <TabsTrigger value="activity">Aktivitas</TabsTrigger>
         </TabsList>
 
         <TabsContent value="control">
@@ -345,46 +592,50 @@ export default function DashboardPage() {
             </CardHeader>
             <CardContent>
               <div className="space-y-3">
-                {mockRecentActivities.map((activity) => (
-                  <div
-                    key={activity.id}
-                    className="flex items-start justify-between p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors"
-                  >
-                    <div className="flex items-start gap-3">
-                      <div className={`mt-1 h-2 w-2 rounded-full ${activity.status === 'completed' ? 'bg-green-500' :
-                        activity.status === 'warning' ? 'bg-yellow-500' :
-                          'bg-gray-500'
-                        }`} />
-                      <div>
-                        <p className="font-medium">{activity.action}</p>
-                        <div className="flex items-center gap-2 text-sm text-gray-500 mt-1">
-                          <Clock className="h-3 w-3" />
-                          <span>{activity.time}</span>
-                          {activity.duration && (
-                            <>
-                              <span>•</span>
-                              <span>{activity.duration}</span>
-                            </>
-                          )}
-                          {activity.user && (
-                            <>
-                              <span>•</span>
-                              <span>by {activity.user}</span>
-                            </>
-                          )}
+                {recentActivities.length > 0 ? (
+                  recentActivities.map((activity) => (
+                    <div
+                      key={activity.id}
+                      className="flex items-start justify-between p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors"
+                    >
+                      <div className="flex items-start gap-3">
+                        <div className={`mt-1 h-2 w-2 rounded-full ${activity.status === 'completed' ? 'bg-green-500' :
+                            activity.status === 'warning' ? 'bg-yellow-500' :
+                              'bg-gray-500'
+                          }`} />
+                        <div>
+                          <p className="font-medium">{activity.action}</p>
+                          <div className="flex items-center gap-2 text-sm text-gray-500 mt-1">
+                            <Clock className="h-3 w-3" />
+                            <span>{formatTime(activity.timestamp)}</span>
+                            {activity.duration && (
+                              <>
+                                <span>•</span>
+                                <span>{activity.duration}</span>
+                              </>
+                            )}
+                            {activity.user && (
+                              <>
+                                <span>•</span>
+                                <span>by {activity.user}</span>
+                              </>
+                            )}
+                          </div>
                         </div>
                       </div>
+                      <span className={`text-xs px-2 py-1 rounded ${activity.status === 'completed' ? 'bg-green-100 text-green-800' :
+                          activity.status === 'warning' ? 'bg-yellow-100 text-yellow-800' :
+                            'bg-gray-100 text-gray-800'
+                        }`}>
+                        {activity.status === 'completed' ? 'Selesai' :
+                          activity.status === 'warning' ? 'Peringatan' :
+                            'Berjalan'}
+                      </span>
                     </div>
-                    <span className={`text-xs px-2 py-1 rounded ${activity.status === 'completed' ? 'bg-green-100 text-green-800' :
-                      activity.status === 'warning' ? 'bg-yellow-100 text-yellow-800' :
-                        'bg-gray-100 text-gray-800'
-                      }`}>
-                      {activity.status === 'completed' ? 'Selesai' :
-                        activity.status === 'warning' ? 'Peringatan' :
-                          'Berjalan'}
-                    </span>
-                  </div>
-                ))}
+                  ))
+                ) : (
+                  <p className="text-center text-gray-500 py-8">Belum ada aktivitas</p>
+                )}
               </div>
             </CardContent>
           </Card>
@@ -403,7 +654,7 @@ export default function DashboardPage() {
               variant={sensorData.pumpStatus ? "destructive" : "default"}
               className="w-full justify-start gap-2"
               onClick={() => handleManualControl(sensorData.pumpStatus ? "OFF" : "ON")}
-              disabled={isLoading}
+              disabled={isLoading || connectionStatus === "disconnected"}
             >
               <Power className="h-4 w-4" />
               {sensorData.pumpStatus ? "Matikan Pompa" : "Nyalakan Pompa"}
@@ -412,20 +663,11 @@ export default function DashboardPage() {
             <Button
               variant="outline"
               className="w-full justify-start gap-2"
-              onClick={() => handleManualControl("ON")}
-              disabled={isLoading}
+              onClick={handleQuickWater}
+              disabled={isLoading || connectionStatus === "disconnected"}
             >
               <Droplets className="h-4 w-4" />
               Siram 5 Menit
-            </Button>
-
-            <Button
-              variant="outline"
-              className="w-full justify-start gap-2"
-              onClick={() => window.location.href = '/dashboard/schedule'}
-            >
-              <Clock className="h-4 w-4" />
-              Atur Jadwal
             </Button>
 
             <Button
@@ -448,40 +690,34 @@ export default function DashboardPage() {
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <div className="text-center p-4 bg-blue-50 rounded-lg">
                 <p className="text-sm text-blue-600">Penyiraman</p>
-                <p className="text-3xl font-bold text-blue-900">3x</p>
+                <p className="text-3xl font-bold text-blue-900">{todayStats.wateringCount}x</p>
                 <p className="text-xs text-blue-700">Selesai</p>
               </div>
 
               <div className="text-center p-4 bg-green-50 rounded-lg">
                 <p className="text-sm text-green-600">Durasi Total</p>
-                <p className="text-3xl font-bold text-green-900">15m</p>
-                <p className="text-xs text-green-700">Rata-rata 5m/penyiraman</p>
+                <p className="text-3xl font-bold text-green-900">{todayStats.totalDuration}m</p>
+                <p className="text-xs text-green-700">
+                  Rata-rata {todayStats.wateringCount > 0 ?
+                    (todayStats.totalDuration / todayStats.wateringCount).toFixed(1) : 0}m/penyiraman
+                </p>
               </div>
 
               <div className="text-center p-4 bg-purple-50 rounded-lg">
                 <p className="text-sm text-purple-600">Air Digunakan</p>
-                <p className="text-3xl font-bold text-purple-900">45L</p>
-                <p className="text-xs text-purple-700">±15L/penyiraman</p>
+                <p className="text-3xl font-bold text-purple-900">{todayStats.waterUsed}L</p>
+                <p className="text-xs text-purple-700">
+                  ±{todayStats.wateringCount > 0 ?
+                    (todayStats.waterUsed / todayStats.wateringCount).toFixed(1) : 0}L/penyiraman
+                </p>
               </div>
 
               <div className="text-center p-4 bg-yellow-50 rounded-lg">
                 <p className="text-sm text-yellow-600">Peringatan</p>
-                <p className="text-3xl font-bold text-yellow-900">1x</p>
-                <p className="text-xs text-yellow-700">Kelembaban rendah</p>
-              </div>
-            </div>
-
-            <div className="mt-6 p-4 bg-gray-50 rounded-lg">
-              <div className="flex items-center justify-between mb-2">
-                <p className="font-medium">Konsumsi Air Mingguan</p>
-                <p className="text-sm text-gray-500">Minggu ini vs minggu lalu</p>
-              </div>
-              <div className="h-2 w-full bg-gray-200 rounded-full overflow-hidden">
-                <div className="h-full bg-linear-to-r from-blue-500 to-green-500" style={{ width: '65%' }} />
-              </div>
-              <div className="flex justify-between text-sm text-gray-500 mt-2">
-                <span>Senin</span>
-                <span>Minggu</span>
+                <p className="text-3xl font-bold text-yellow-900">{todayStats.warnings}x</p>
+                <p className="text-xs text-yellow-700">
+                  {sensorData.soilMoisture < 35 ? 'Kelembaban rendah' : 'Tidak ada'}
+                </p>
               </div>
             </div>
           </CardContent>
@@ -498,7 +734,11 @@ export default function DashboardPage() {
               <p className="text-sm text-yellow-700 mt-1">
                 Kelembaban tanah saat ini {sensorData.soilMoisture.toFixed(1)}%.
                 Sistem akan menyiram otomatis jika mencapai 30%.
-                <Button variant="link" className="h-auto p-0 text-yellow-800 ml-1">
+                <Button
+                  variant="link"
+                  className="h-auto p-0 text-yellow-800 ml-1"
+                  onClick={() => window.location.href = '/dashboard/settings'}
+                >
                   Atur threshold
                 </Button>
               </p>
@@ -510,9 +750,19 @@ export default function DashboardPage() {
       {/* Footer Info */}
       <div className="text-center text-sm text-gray-500 pt-4 border-t">
         <p>
-          Sistem terakhir diperbarui: {sensorData.timestamp.toLocaleTimeString('id-ID')} •
-          Status: <span className="text-green-600 font-medium">Online</span> •
-          Koneksi: <span className="text-green-600 font-medium">Stabil</span>
+          Sistem terakhir diperbarui: {formatTime(sensorData.timestamp)} •
+          Status: <span className={`font-medium ${connectionStatus === "connected" ? "text-green-600" :
+              connectionStatus === "connecting" ? "text-yellow-600" :
+                "text-red-600"
+            }`}>
+            {connectionStatus === "connected" ? "Online" :
+              connectionStatus === "connecting" ? "Menghubungkan..." :
+                "Offline"}
+          </span> •
+          Koneksi: <span className={`font-medium ${connectionStatus === "connected" ? "text-green-600" : "text-red-600"
+            }`}>
+            {connectionStatus === "connected" ? "Stabil" : "Terputus"}
+          </span>
         </p>
       </div>
     </div>
