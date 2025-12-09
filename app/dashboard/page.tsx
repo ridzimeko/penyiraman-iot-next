@@ -55,10 +55,10 @@ interface TodayStats {
 }
 
 export default function DashboardPage() {
-  const [sensorData, setSensorData] = useState<SensorData>({
-    soilMoisture: 0,
-    temperature: 0,
-    humidity: 0,
+  const [sensorData, setSensorData] = useState({
+    kelembapan_tanah: 0,
+    kelembapan_udara: 0,
+    suhu: 0,
     pumpStatus: false,
     waterLevel: 0,
     batteryLevel: 0,
@@ -81,11 +81,11 @@ export default function DashboardPage() {
   const [lastReloadTime, setLastReloadTime] = useState(Date.now());
 
   // Helper function untuk mendapatkan mock data
-  const getMockData = (): SensorData => {
+  const getMockData = () => {
     return {
-      soilMoisture: 45.5 + Math.random() * 10,
-      temperature: 27 + Math.random() * 3,
-      humidity: 65 + Math.random() * 10,
+      kelembapan_tanah: 45.5 + Math.random() * 10,
+      kelembapan_udara: 65 + Math.random() * 10,
+      suhu: 27 + Math.random() * 3,
       pumpStatus: false,
       waterLevel: 75,
       batteryLevel: 85,
@@ -104,7 +104,7 @@ export default function DashboardPage() {
       setError(null);
 
       // Test koneksi dengan membaca data sekali
-      const sensorRef = ref(database, "sensor_data");
+      const sensorRef = ref(database, "sensor");
       const snapshot = await get(sensorRef);
 
       if (snapshot.exists()) {
@@ -412,7 +412,7 @@ export default function DashboardPage() {
   };
 
   // Loading state dengan retry button
-  if (isLoading && sensorData.soilMoisture === 0) {
+  if (isLoading && sensorData.kelembapan_tanah === 0) {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <div className="text-center">
@@ -500,31 +500,31 @@ export default function DashboardPage() {
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatusCard
           title="Kelembaban Tanah"
-          value={`${sensorData.soilMoisture.toFixed(1)}%`}
+          value={`${sensorData.kelembapan_tanah.toFixed(1)}%`}
           icon={<Droplets className="h-6 w-6" />}
           status={
-            sensorData.soilMoisture < 30
+            sensorData.kelembapan_tanah < 30
               ? "critical"
-              : sensorData.soilMoisture < 50
+              : sensorData.kelembapan_tanah < 50
                 ? "warning"
                 : "normal"
           }
           description={
             <div className="flex items-center gap-2">
-              <div className={`h-2 w-2 rounded-full ${getStatusColor(sensorData.soilMoisture)}`} />
-              <span className="text-xs">{getStatusText(sensorData.soilMoisture)}</span>
+              <div className={`h-2 w-2 rounded-full ${getStatusColor(sensorData.kelembapan_tanah)}`} />
+              <span className="text-xs">{getStatusText(sensorData.kelembapan_tanah)}</span>
             </div>
           }
         />
 
         <StatusCard
           title="Suhu Udara"
-          value={`${sensorData.temperature.toFixed(1)}°C`}
+          value={`${sensorData.suhu.toFixed(1)}°C`}
           icon={<Thermometer className="h-6 w-6" />}
           status={
-            sensorData.temperature > 35
+            sensorData.suhu > 35
               ? "critical"
-              : sensorData.temperature > 30
+              : sensorData.suhu > 30
                 ? "warning"
                 : "normal"
           }
@@ -532,12 +532,12 @@ export default function DashboardPage() {
 
         <StatusCard
           title="Kelembaban Udara"
-          value={`${sensorData.humidity.toFixed(1)}%`}
+          value={`${sensorData.kelembapan_udara.toFixed(1)}%`}
           icon={<Cloud className="h-6 w-6" />}
           status={
-            sensorData.humidity > 80
+            sensorData.kelembapan_udara > 80
               ? "warning"
-              : sensorData.humidity < 40
+              : sensorData.kelembapan_udara < 40
                 ? "warning"
                 : "normal"
           }
@@ -716,7 +716,7 @@ export default function DashboardPage() {
                 <p className="text-sm text-yellow-600">Peringatan</p>
                 <p className="text-3xl font-bold text-yellow-900">{todayStats.warnings}x</p>
                 <p className="text-xs text-yellow-700">
-                  {sensorData.soilMoisture < 35 ? 'Kelembaban rendah' : 'Tidak ada'}
+                  {sensorData.kelembapan_tanah < 35 ? 'Kelembaban rendah' : 'Tidak ada'}
                 </p>
               </div>
             </div>
@@ -725,14 +725,14 @@ export default function DashboardPage() {
       </div>
 
       {/* System Alerts */}
-      {sensorData.soilMoisture < 35 && (
+      {sensorData.kelembapan_tanah < 35 && (
         <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
           <div className="flex items-start gap-3">
             <AlertCircle className="h-5 w-5 text-yellow-600 mt-0.5" />
             <div className="flex-1">
               <p className="font-medium text-yellow-800">Perhatian: Kelembaban Tanah Rendah</p>
               <p className="text-sm text-yellow-700 mt-1">
-                Kelembaban tanah saat ini {sensorData.soilMoisture.toFixed(1)}%.
+                Kelembaban tanah saat ini {sensorData.kelembapan_tanah.toFixed(1)}%.
                 Sistem akan menyiram otomatis jika mencapai 30%.
                 <Button
                   variant="link"
