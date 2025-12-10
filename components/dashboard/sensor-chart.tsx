@@ -41,6 +41,7 @@ import { id } from "date-fns/locale";
 // Import Firebase
 import { database } from "@/lib/firebase";
 import { ref, onValue, get } from "firebase/database";
+import useRealtimeFirebase from "@/hooks/useRealtimeFirebase";
 
 // Type definitions
 interface SensorDataPoint {
@@ -195,6 +196,8 @@ export default function SensorChart() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const sensorData = useRealtimeFirebase(['sensor', 'status'])
+
   const selectedRange = TIME_RANGES.find(range => range.value === timeRange) || TIME_RANGES[3];
 
   // Helper function untuk parse timestamp
@@ -242,86 +245,33 @@ export default function SensorChart() {
     setError(null);
 
     try {
-      // Coba beberapa path yang mungkin
-      const paths = [
-        "sensor_history",
-        "sensor_data/history",
-        "history",
-        "logs"
-      ];
+      if (sensorData) {
+        console.log('data detected')
+        const timestamp = parseTimestamp(sensorData?.sensor?.timestamp);
+        const date = new Date(timestamp);
 
-      let foundData = false;
+        const chartDataArray: SensorDataPoint[] = Array.from({ length: 24 }, (_, i) => {
+          const time = subHours(date, i);
+          const soilMoisture = getNumericValue(sensorData?.sensor?.kelembapan_tanah, 0);
+          const temperature = getNumericValue(sensorData?.sensor?.suhu, 0);
+          const humidity = getNumericValue(sensorData?.sensor?.kelembapan_udara, 0);
+          const pumpStatus = getBooleanValue(sensorData.status?.pompa === "ON");
 
-      for (const path of paths) {
-        try {
-          const historyRef = ref(database, path);
-          
-          // Coba ambil data
-          const snapshot = await get(historyRef);
-          const data = snapshot.val();
+          return {
+            waktu: format(time, "HH:mm", { locale: id }),
+            timestamp: time.getTime(),
+            kelembaban: soilMoisture,
+            suhu: temperature,
+            humidity: humidity,
+            pumpStatus: pumpStatus,
+            // waterLevel: getNumericValue(data.waterLevel || data.water),
+            // batteryLevel: getNumericValue(data.batteryLevel || data.battery),
+            // phLevel: getNumericValue(data.phLevel || data.ph),
+            // lightIntensity: getNumericValue(data.lightIntensity || data.light),
+          };
+        }).reverse();
 
-          if (data) {
-            // Konversi data Firebase ke format chart
-            const chartDataArray: SensorDataPoint[] = [];
-            
-            Object.entries(data).forEach(([key, value]) => {
-              const entry = value as FirebaseSensorData;
-              const timestamp = parseTimestamp(entry.timestamp || entry.time || key);
-              const date = new Date(timestamp);
-
-              // Filter berdasarkan rentang waktu
-              const cutoffTime = subHours(new Date(), selectedRange.hours).getTime();
-              if (timestamp >= cutoffTime) {
-                const soilMoisture = getNumericValue(
-                  entry.soilMoisture || entry.kelembaban || entry.moisture,
-                  0
-                );
-                const temperature = getNumericValue(
-                  entry.temperature || entry.suhu,
-                  0
-                );
-                const humidity = getNumericValue(
-                  entry.humidity || entry.humidityAir,
-                  0
-                );
-                const pumpStatus = getBooleanValue(
-                  entry.pumpStatus || entry.pompa
-                );
-
-                chartDataArray.push({
-                  waktu: format(date, "HH:mm", { locale: id }),
-                  timestamp: timestamp,
-                  kelembaban: soilMoisture,
-                  suhu: temperature,
-                  humidity: humidity,
-                  pumpStatus: pumpStatus,
-                  waterLevel: getNumericValue(entry.waterLevel || entry.water),
-                  batteryLevel: getNumericValue(entry.batteryLevel || entry.battery),
-                  phLevel: getNumericValue(entry.phLevel || entry.ph),
-                  lightIntensity: getNumericValue(entry.lightIntensity || entry.light),
-                });
-              }
-            });
-
-            // Urutkan berdasarkan timestamp
-            const sortedData = chartDataArray.sort((a, b) => a.timestamp - b.timestamp);
-            
-            // Jika ada data, set dan keluar dari loop
-            if (sortedData.length > 0) {
-              setChartData(sortedData);
-              foundData = true;
-              break;
-            }
-          }
-        } catch (err) {
-          console.log(`Path ${path} tidak ada atau error:`, err);
-          continue;
-        }
-      }
-
-      // Jika tidak ada data di path manapun, gunakan data real-time
-      if (!foundData) {
-        await fetchCurrentData();
+        setChartData(chartDataArray);
       }
 
     } catch (error) {
@@ -338,20 +288,16 @@ export default function SensorChart() {
   // Fetch data real-time jika tidak ada history
   const fetchCurrentData = async () => {
     try {
-      const currentRef = ref(database, "sensor_data");
-      const snapshot = await get(currentRef);
-      const data = snapshot.val() as FirebaseSensorData;
-
-      if (data) {
-        const timestamp = parseTimestamp(data.timestamp);
+      if (sensorData) {
+        const timestamp = parseTimestamp(sensorData?.sensor?.timestamp);
         const date = new Date(timestamp);
-        
+
         const chartDataArray: SensorDataPoint[] = Array.from({ length: 24 }, (_, i) => {
           const time = subHours(date, i);
-          const soilMoisture = getNumericValue(data.soilMoisture || data.kelembaban, 0);
-          const temperature = getNumericValue(data.temperature || data.suhu, 0);
-          const humidity = getNumericValue(data.humidity || data.humidityAir, 0);
-          const pumpStatus = getBooleanValue(data.pumpStatus || data.pompa);
+          const soilMoisture = getNumericValue(sensorData?.sensor?.kelembapan_tanah, 0);
+          const temperature = getNumericValue(sensorData?.sensor?.suhu, 0);
+          const humidity = getNumericValue(sensorData?.sensor?.kelembapan_udara, 0);
+          const pumpStatus = getBooleanValue(sensorData.status?.pompa === "ON");
 
           return {
             waktu: format(time, "HH:mm", { locale: id }),
@@ -360,10 +306,10 @@ export default function SensorChart() {
             suhu: temperature,
             humidity: humidity,
             pumpStatus: pumpStatus,
-            waterLevel: getNumericValue(data.waterLevel || data.water),
-            batteryLevel: getNumericValue(data.batteryLevel || data.battery),
-            phLevel: getNumericValue(data.phLevel || data.ph),
-            lightIntensity: getNumericValue(data.lightIntensity || data.light),
+            // waterLevel: getNumericValue(data.waterLevel || data.water),
+            // batteryLevel: getNumericValue(data.batteryLevel || data.battery),
+            // phLevel: getNumericValue(data.phLevel || data.ph),
+            // lightIntensity: getNumericValue(data.lightIntensity || data.light),
           };
         }).reverse();
 
@@ -411,43 +357,36 @@ export default function SensorChart() {
     setChartData(data);
   };
 
-  // Setup real-time listener
-  useEffect(() => {
-    const sensorRef = ref(database, "sensor_data");
-    
-    const unsubscribe = onValue(sensorRef, (snapshot) => {
-      const data = snapshot.val() as FirebaseSensorData;
-      if (data && chartData.length > 0) {
-        // Update data terbaru dalam chart
-        const soilMoisture = getNumericValue(data.soilMoisture || data.kelembaban, 0);
-        const temperature = getNumericValue(data.temperature || data.suhu, 0);
-        const humidity = getNumericValue(data.humidity || data.humidityAir, 0);
-        const pumpStatus = getBooleanValue(data.pumpStatus || data.pompa);
-
-        const newDataPoint: SensorDataPoint = {
-          waktu: format(new Date(), "HH:mm", { locale: id }),
-          timestamp: Date.now(),
-          kelembaban: soilMoisture,
-          suhu: temperature,
-          humidity: humidity,
-          pumpStatus: pumpStatus,
-        };
-
-        // Tambahkan data baru dan hapus data terlama jika sudah lebih dari rentang waktu
-        const cutoffTime = subHours(new Date(), selectedRange.hours).getTime();
-        const filteredData = chartData.filter(item => item.timestamp >= cutoffTime);
-        
-        setChartData([...filteredData, newDataPoint].sort((a, b) => a.timestamp - b.timestamp));
-      }
-    });
-
-    return () => unsubscribe();
-  }, [chartData.length, selectedRange.hours]);
-
   // Fetch data awal dan ketika rentang waktu berubah
+  // effect yang mengconvert setiap kali sensorData masuk
   useEffect(() => {
-    fetchSensorData();
-  }, [timeRange]);
+    if (!sensorData) return;
+
+    try {
+      const timestamp = parseTimestamp(sensorData?.sensor?.timestamp ?? Date.now());
+      const date = new Date(timestamp);
+
+      const chartDataArray: SensorDataPoint[] = Array.from({ length: 24 }, (_, i) => {
+        const time = subHours(date, i);
+        return {
+          waktu: format(time, "HH:mm", { locale: id }),
+          timestamp: time.getTime(),
+          kelembaban: getNumericValue(sensorData?.sensor?.kelembapan_tanah, 0),
+          suhu: getNumericValue(sensorData?.sensor?.suhu, 0),
+          humidity: getNumericValue(sensorData?.sensor?.kelembapan_udara, 0),
+          pumpStatus: getBooleanValue(sensorData?.status?.pompa === "ON"),
+        };
+      }).reverse();
+
+      setChartData(chartDataArray);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsLoading(false);
+      setIsRefreshing(false);
+    }
+  }, [sensorData]); // <--- hanya depend ke sensorData
+
 
   const handleRefresh = () => {
     fetchSensorData();
@@ -545,6 +484,7 @@ export default function SensorChart() {
         </div>
       );
     }
+
 
     const chartProps = {
       data: chartData,
@@ -662,7 +602,8 @@ export default function SensorChart() {
 
     // Default line chart
     return (
-      <LineChart {...chartProps}>
+     <>
+       <LineChart data={chartProps.data}>
         <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
         <XAxis
           dataKey="waktu"
@@ -713,6 +654,7 @@ export default function SensorChart() {
           />
         )}
       </LineChart>
+     </>
     );
   };
 
@@ -901,14 +843,13 @@ export default function SensorChart() {
                 </div>
                 <div>
                   <p className="text-sm text-gray-600">Trend</p>
-                  <p className={`text-xl font-bold ${
-                    chartData.length > 1 && 
-                    chartData[chartData.length - 1].kelembaban > chartData[0].kelembaban 
-                      ? "text-green-600" 
-                      : "text-red-600"
-                  }`}>
-                    {chartData.length > 1 && 
-                     chartData[chartData.length - 1].kelembaban > chartData[0].kelembaban ? "↑" : "↓"}
+                  <p className={`text-xl font-bold ${chartData.length > 1 &&
+                    chartData[chartData.length - 1].kelembaban > chartData[0].kelembaban
+                    ? "text-green-600"
+                    : "text-red-600"
+                    }`}>
+                    {chartData.length > 1 &&
+                      chartData[chartData.length - 1].kelembaban > chartData[0].kelembaban ? "↑" : "↓"}
                   </p>
                 </div>
               </div>
@@ -940,14 +881,13 @@ export default function SensorChart() {
                 </div>
                 <div>
                   <p className="text-sm text-gray-600">Trend</p>
-                  <p className={`text-xl font-bold ${
-                    chartData.length > 1 && 
-                    chartData[chartData.length - 1].suhu > chartData[0].suhu 
-                      ? "text-red-600" 
-                      : "text-blue-600"
-                  }`}>
-                    {chartData.length > 1 && 
-                     chartData[chartData.length - 1].suhu > chartData[0].suhu ? "↑" : "↓"}
+                  <p className={`text-xl font-bold ${chartData.length > 1 &&
+                    chartData[chartData.length - 1].suhu > chartData[0].suhu
+                    ? "text-red-600"
+                    : "text-blue-600"
+                    }`}>
+                    {chartData.length > 1 &&
+                      chartData[chartData.length - 1].suhu > chartData[0].suhu ? "↑" : "↓"}
                   </p>
                 </div>
               </div>
@@ -990,8 +930,8 @@ export default function SensorChart() {
           {/* Info Tambahan */}
           <div className="text-center text-sm text-gray-500">
             <p>
-              Data terakhir diperbarui: {chartData.length > 0 
-                ? format(new Date(chartData[chartData.length - 1].timestamp), "dd/MM/yyyy HH:mm") 
+              Data terakhir diperbarui: {chartData.length > 0
+                ? format(new Date(chartData[chartData.length - 1].timestamp), "dd/MM/yyyy HH:mm")
                 : "Tidak tersedia"} •
               Total data: {chartData.length} titik
             </p>

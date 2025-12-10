@@ -144,40 +144,11 @@ export default function DashboardPage() {
 
   // Real-time listener untuk data sensor
   useEffect(() => {
-    let unsubscribe: (() => void) | null = null;
-
     const setupListener = async () => {
-      const connected = await connectToFirebase();
-
-      if (connected) {
-        const sensorRef = ref(database, "sensor_data");
-
-        unsubscribe = onValue(sensorRef, (snapshot) => {
-          const data = snapshot.val() as Partial<SensorData>;
-          if (data) {
-            setSensorData(prev => ({
-              ...prev,
-              ...data,
-              timestamp: data.timestamp || Date.now(),
-            }));
-            setConnectionStatus("connected");
-          }
-        }, (error) => {
-          console.error("Error in sensor listener:", error);
-          setConnectionStatus("disconnected");
-          setError("Koneksi terputus. Menggunakan data terakhir.");
-        });
-      }
+      await connectToFirebase();
     };
 
     setupListener();
-
-    // Cleanup
-    return () => {
-      if (unsubscribe) {
-        unsubscribe();
-      }
-    };
   }, []);
 
   // Update mock data setiap 5 detik jika disconnected
@@ -435,7 +406,7 @@ export default function DashboardPage() {
   return (
     <div className="space-y-6">
       {/* Auto Reload Control Banner */}
-      <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+      {/* <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <div className={`h-3 w-3 rounded-full ${autoReload ? 'bg-green-500 animate-pulse' : 'bg-gray-400'}`} />
@@ -472,7 +443,7 @@ export default function DashboardPage() {
             </Button>
           </div>
         </div>
-      </div>
+      </div> */}
 
       {/* Connection Status Banner */}
       {connectionStatus === "disconnected" && (
