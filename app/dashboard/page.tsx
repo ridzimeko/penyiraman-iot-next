@@ -264,12 +264,16 @@ export default function DashboardPage() {
     setIsLoading(true);
     try {
       const pumpRef = ref(database, "controls/pump");
+      const statusRef = ref(database, "status")
       await update(pumpRef, {
         status: action === "ON",
         mode: "manual",
         lastUpdated: Date.now(),
         updatedBy: "dashboard",
       });
+      await update(statusRef, {
+        pompa: action
+      })
 
       const activityId = Date.now().toString();
       const activityRef = ref(database, `activities/${activityId}`);

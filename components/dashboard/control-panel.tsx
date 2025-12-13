@@ -13,9 +13,9 @@ import {
   Droplets,
   AlertCircle
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { ref, update } from "firebase/database";
+import { get, ref, update } from "firebase/database";
 import { database } from "@/lib/firebase";
 
 interface ControlPanelProps {
@@ -28,12 +28,12 @@ interface ControlPanelProps {
 export default function ControlPanel({
   currentMode,
   onManualControl,
+  pumpStatus
 }: ControlPanelProps) {
   const [mode, setMode] = useState<"auto" | "manual" | "schedule">(currentMode);
   const [moistureThreshold, setMoistureThreshold] = useState(30);
   const [duration, setDuration] = useState(5);
   const [loading, setLoading] = useState(false);
-  const [pumpStatus, setPumpStatus] = useState(false);
 
   const handleModeChange = (value: string) => {
     if (value) {
@@ -70,9 +70,10 @@ export default function ControlPanel({
   const handlePumpStatus =  async () => {
     try {
       setLoading(true);
-      setPumpStatus(!pumpStatus);
+      const status = !pumpStatus
+      console.log("current", status, "prev", pumpStatus)
       await update(ref(database, "status"), {
-        pompa: pumpStatus ? "OFF" : "ON",
+        pompa: status ? "ON" : "OFF",
       });
       await update(ref(database, "controls/pump"), {
         mode: "manual",
@@ -84,6 +85,14 @@ export default function ControlPanel({
     }
   }
 
+  useEffect(() => {
+    async function load() {
+      const snapshot = await get(ref(database, "controls/pump/moisture_threshold")); // AMBIL SEMUA DATA DI ROOT
+      setMoistureThreshold(snapshot.val());
+    }
+
+    load();
+  }, []);
 
   return (
     <div className="space-y-6">
