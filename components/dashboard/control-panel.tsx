@@ -71,9 +71,11 @@ export default function ControlPanel({
     try {
       setLoading(true);
       setPumpStatus(!pumpStatus);
-      await update(ref(database, "sensor/status"), {
+      await update(ref(database, "status"), {
         pompa: pumpStatus ? "OFF" : "ON",
-        updated_at: Date.now(),
+      });
+      await update(ref(database, "controls/pump"), {
+        mode: "manual",
       });
     } catch (error) {
       console.error(error);

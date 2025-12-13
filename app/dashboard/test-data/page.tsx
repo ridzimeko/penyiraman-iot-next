@@ -1,20 +1,16 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { database } from "@/lib/firebase";
-import { ref, get } from "firebase/database";
+import useRealtimeFirebase from "@/hooks/useRealtimeFirebase";
 
 export default function AllData() {
   const [data, setData] = useState(null);
+  const sensorRef = useRealtimeFirebase(["/"])
 
   useEffect(() => {
-    async function load() {
-      const snapshot = await get(ref(database, "/")); // AMBIL SEMUA DATA DI ROOT
-      setData(snapshot.val());
-    }
+   setData(sensorRef);
 
-    load();
-  }, []);
+  }, [sensorRef]);
 
   return (
     <div>
