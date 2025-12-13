@@ -1,32 +1,43 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { database } from "@/lib/firebase";
 import { ref, onValue } from "firebase/database";
 
 export default function useRealtimeFirebase<T = any>(paths: string[]) {
-  const [data, setData] = useState<T | null>(null);
+  const [data, setData] = useState<Record<string, T>>({});
+  const dataRef = useRef<Record<string, T>>({});
 
   useEffect(() => {
-    if (!paths.length) return;
+    if (!paths || paths.length === 0) return;
 
-    const unsubscribers: any[] = [];
+    const listeners: (() => void)[] = [];
 
     paths.forEach((path) => {
       const r = ref(database, path);
 
-      const unsub = onValue(r, (snapshot) => {
-        setData((prev: any) => ({
-          ...prev,
-          [path]: snapshot.val(),
-        }));
+      const unsubscribe = onValue(r, (snapshot) => {
+        const newValue = snapshot.val();
+
+        // ⛔ stop update kalau data sama
+        if (dataRef.current[path] === newValue) return;
+
+        dataRef.current = {
+          ...dataRef.current,
+          [path]: newValue,
+        };
+
+        setData(dataRef.current);
       });
 
-      unsubscribers.push(unsub);
+      listeners.push(unsubscribe);
     });
 
-    return () => unsubscribers.forEach((u) => u());
-  }, [paths]);
+    return () => {
+      listeners.forEach((unsub) => unsub());
+    };
+  }, [paths]); // 🔥 penting
 
   return data;
 }
