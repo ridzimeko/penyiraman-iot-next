@@ -21,6 +21,7 @@ import {
 // Import Firebase Realtime Database
 import { database } from "@/lib/firebase";
 import { ref, onValue, set, update, get } from "firebase/database";
+import useRealtimeFirebase from "@/hooks/useRealtimeFirebase";
 
 // Types untuk data sensor
 interface SensorData {
@@ -79,6 +80,7 @@ export default function DashboardPage() {
   });
   const [autoReload, setAutoReload] = useState(true);
   const [lastReloadTime, setLastReloadTime] = useState(Date.now());
+  const sensorRef = useRealtimeFirebase(["sensor", "status"]);
 
   // Helper function untuk mendapatkan mock data
   const getMockData = () => {
@@ -144,12 +146,16 @@ export default function DashboardPage() {
 
   // Real-time listener untuk data sensor
   useEffect(() => {
-    const setupListener = async () => {
-      await connectToFirebase();
-    };
-
-    setupListener();
-  }, []);
+    if (sensorRef) {
+      setSensorData(prev => ({
+        ...prev,
+        ...sensorRef.sensor,
+        pumpStatus: sensorRef.status?.pompa === "ON",
+      }));
+      setConnectionStatus("connected");
+      setIsLoading(false);
+    }
+  }, [sensorRef]);
 
   // Update mock data setiap 5 detik jika disconnected
   useEffect(() => {

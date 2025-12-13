@@ -3,9 +3,9 @@
 import { Button } from "@/components/ui/button";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Slider } from "@/components/ui/slider";
-import { 
-  Play, 
-  StopCircle, 
+import {
+  Play,
+  StopCircle,
   Settings,
   Zap,
   Clock,
@@ -15,6 +15,8 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { ref, update } from "firebase/database";
+import { database } from "@/lib/firebase";
 
 interface ControlPanelProps {
   currentMode: "auto" | "manual" | "schedule";
@@ -25,13 +27,13 @@ interface ControlPanelProps {
 
 export default function ControlPanel({
   currentMode,
-  pumpStatus,
   onManualControl,
-  loading = false,
 }: ControlPanelProps) {
   const [mode, setMode] = useState<"auto" | "manual" | "schedule">(currentMode);
   const [moistureThreshold, setMoistureThreshold] = useState(30);
   const [duration, setDuration] = useState(5);
+  const [loading, setLoading] = useState(false);
+  const [pumpStatus, setPumpStatus] = useState(false);
 
   const handleModeChange = (value: string) => {
     if (value) {
@@ -48,6 +50,39 @@ export default function ControlPanel({
     }, minutes * 60 * 1000);
   };
 
+  const handleSaveConfig = async () => {
+    try {
+      setLoading(true);
+      await update(ref(database, "controls/pump"), {
+        mode: mode,
+        moisture_threshold: moistureThreshold,
+        updated_at: Date.now(),
+      });
+      alert("Konfigurasi berhasil disimpan");
+    } catch (err) {
+      console.error(err);
+      alert("Gagal menyimpan konfigurasi");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handlePumpStatus =  async () => {
+    try {
+      setLoading(true);
+      setPumpStatus(!pumpStatus);
+      await update(ref(database, "sensor/status"), {
+        pompa: pumpStatus ? "OFF" : "ON",
+        updated_at: Date.now(),
+      });
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+
   return (
     <div className="space-y-6">
       {/* Mode Selection */}
@@ -59,8 +94,8 @@ export default function ControlPanel({
           onValueChange={handleModeChange}
           className="grid grid-cols-3 gap-2"
         >
-          <ToggleGroupItem 
-            value="auto" 
+          <ToggleGroupItem
+            value="auto"
             className="flex flex-col items-center justify-center h-24 gap-2 data-[state=on]:bg-green-50 data-[state=on]:border-green-200 data-[state=on]:text-green-700"
           >
             <Zap className="h-6 w-6" />
@@ -69,9 +104,9 @@ export default function ControlPanel({
               <p className="text-xs text-gray-500">Berdasarkan sensor</p>
             </div>
           </ToggleGroupItem>
-          
-          <ToggleGroupItem 
-            value="manual" 
+
+          <ToggleGroupItem
+            value="manual"
             className="flex flex-col items-center justify-center h-24 gap-2 data-[state=on]:bg-blue-50 data-[state=on]:border-blue-200 data-[state=on]:text-blue-700"
           >
             <Settings className="h-6 w-6" />
@@ -80,7 +115,7 @@ export default function ControlPanel({
               <p className="text-xs text-gray-500">Kontrol langsung</p>
             </div>
           </ToggleGroupItem>
-          
+
         </ToggleGroup>
       </div>
 
@@ -94,19 +129,18 @@ export default function ControlPanel({
             <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <h4 className="font-medium">Status Pompa</h4>
-                <div className={`px-3 py-1 rounded-full text-sm font-medium ${
-                  pumpStatus 
-                    ? "bg-green-100 text-green-800" 
+                <div className={`px-3 py-1 rounded-full text-sm font-medium ${pumpStatus
+                    ? "bg-green-100 text-green-800"
                     : "bg-gray-100 text-gray-800"
-                }`}>
+                  }`}>
                   {pumpStatus ? "Menyala" : "Mati"}
                 </div>
               </div>
-              
+
               <div className="flex gap-3">
                 <Button
                   variant={pumpStatus ? "destructive" : "default"}
-                  onClick={() => onManualControl(pumpStatus ? "OFF" : "ON")}
+                  onClick={() => handlePumpStatus()}
                   disabled={loading}
                   className="flex-1 gap-2 h-12"
                 >
@@ -130,7 +164,7 @@ export default function ControlPanel({
                 <h4 className="font-medium">Siram Cepat</h4>
                 <CloudRain className="h-5 w-5 text-blue-500" />
               </div>
-              
+
               <div className="grid grid-cols-3 gap-2">
                 <Button
                   variant="outline"
@@ -167,8 +201,16 @@ export default function ControlPanel({
 
       {mode === "auto" && (
         <Card>
-          <CardHeader>
+          <CardHeader className="flex justify-between items-center">
             <CardTitle className="text-lg">Pengaturan Otomatis</CardTitle>
+            <Button
+              onClick={handleSaveConfig}
+              disabled={loading}
+              className="gap-2 h-10"
+            >
+              {loading ? "Menyimpan..." : "Simpan Konfigurasi"}
+            </Button>
+
           </CardHeader>
           <CardContent className="space-y-6">
             <div className="space-y-4">
@@ -181,7 +223,7 @@ export default function ControlPanel({
                 </div>
                 <div className="text-2xl font-bold text-blue-600">{moistureThreshold}%</div>
               </div>
-              
+
               <div className="space-y-2">
                 <div className="flex justify-between text-sm text-gray-600">
                   <span>Kering (20%)</span>
@@ -228,16 +270,16 @@ export default function ControlPanel({
             <p className="text-gray-600">
               Atur jadwal penyiraman tetap sesuai waktu yang diinginkan.
             </p>
-            
-            <Button 
-              variant="outline" 
+
+            <Button
+              variant="outline"
               className="w-full justify-start gap-2"
               onClick={() => window.location.href = '/dashboard/schedule'}
             >
               <Clock className="h-4 w-4" />
               Kelola Jadwal Penyiraman
             </Button>
-            
+
             <div className="p-4 bg-gray-50 rounded-lg">
               <h4 className="font-medium mb-2">Jadwal Aktif</h4>
               <div className="space-y-2">
@@ -274,9 +316,8 @@ export default function ControlPanel({
             </div>
             <div className="flex items-center justify-between">
               <span className="text-gray-600">Status Pompa</span>
-              <span className={`font-medium ${
-                pumpStatus ? "text-green-600" : "text-gray-600"
-              }`}>
+              <span className={`font-medium ${pumpStatus ? "text-green-600" : "text-gray-600"
+                }`}>
                 {pumpStatus ? "Menyala" : "Mati"}
               </span>
             </div>
