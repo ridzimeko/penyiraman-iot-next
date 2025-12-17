@@ -83,66 +83,66 @@ export default function DashboardPage() {
   const sensorRef = useRealtimeFirebase(["sensor", "status"]);
 
   // Helper function untuk mendapatkan mock data
-  const getMockData = () => {
-    return {
-      kelembapan_tanah: 45.5 + Math.random() * 10,
-      kelembapan_udara: 65 + Math.random() * 10,
-      suhu: 27 + Math.random() * 3,
-      pumpStatus: false,
-      waterLevel: 75,
-      batteryLevel: 85,
-      timestamp: Date.now(),
-      phLevel: 6.5,
-      lightIntensity: 450,
-    };
-  };
+  // const getMockData = () => {
+  //   return {
+  //     kelembapan_tanah: 45.5 + Math.random() * 10,
+  //     kelembapan_udara: 65 + Math.random() * 10,
+  //     suhu: 27 + Math.random() * 3,
+  //     pumpStatus: false,
+  //     waterLevel: 75,
+  //     batteryLevel: 85,
+  //     timestamp: Date.now(),
+  //     phLevel: 6.5,
+  //     lightIntensity: 450,
+  //   };
+  // };
 
   // Retry mechanism untuk koneksi Firebase
-  const connectToFirebase = async (retryCount = 0) => {
-    const maxRetries = 3;
+  // const connectToFirebase = async (retryCount = 0) => {
+  //   const maxRetries = 3;
 
-    try {
-      setConnectionStatus("connecting");
-      setError(null);
+  //   try {
+  //     setConnectionStatus("connecting");
+  //     setError(null);
 
-      // Test koneksi dengan membaca data sekali
-      const sensorRef = ref(database, "sensor");
-      const snapshot = await get(sensorRef);
+  //     // Test koneksi dengan membaca data sekali
+  //     const sensorRef = ref(database, "sensor");
+  //     const snapshot = await get(sensorRef);
 
-      if (snapshot.exists()) {
-        const data = snapshot.val() as Partial<SensorData>;
-        setSensorData(prev => ({
-          ...prev,
-          ...data,
-          timestamp: data.timestamp || Date.now(),
-        }));
-        setConnectionStatus("connected");
-        setIsLoading(false);
-        return true;
-      } else {
-        // Jika tidak ada data, gunakan mock data
-        console.warn("No data in Firebase, using mock data");
-        setSensorData(getMockData());
-        setConnectionStatus("connected");
-        setIsLoading(false);
-        return true;
-      }
-    } catch (err) {
-      console.error("Firebase connection error:", err);
+  //     if (snapshot.exists()) {
+  //       const data = snapshot.val() as Partial<SensorData>;
+  //       setSensorData(prev => ({
+  //         ...prev,
+  //         ...data,
+  //         timestamp: data.timestamp || Date.now(),
+  //       }));
+  //       setConnectionStatus("connected");
+  //       setIsLoading(false);
+  //       return true;
+  //     } else {
+  //       // Jika tidak ada data, gunakan mock data
+  //       console.warn("No data in Firebase, using mock data");
+  //       setSensorData(getMockData());
+  //       setConnectionStatus("connected");
+  //       setIsLoading(false);
+  //       return true;
+  //     }
+  //   } catch (err) {
+  //     console.error("Firebase connection error:", err);
 
-      if (retryCount < maxRetries) {
-        console.log(`Retrying connection... (${retryCount + 1}/${maxRetries})`);
-        await new Promise(resolve => setTimeout(resolve, 2000));
-        return connectToFirebase(retryCount + 1);
-      } else {
-        setError("Tidak dapat terhubung ke Firebase. Menggunakan data simulasi.");
-        setSensorData(getMockData());
-        setConnectionStatus("disconnected");
-        setIsLoading(false);
-        return false;
-      }
-    }
-  };
+  //     if (retryCount < maxRetries) {
+  //       console.log(`Retrying connection... (${retryCount + 1}/${maxRetries})`);
+  //       await new Promise(resolve => setTimeout(resolve, 2000));
+  //       return connectToFirebase(retryCount + 1);
+  //     } else {
+  //       setError("Tidak dapat terhubung ke Firebase. Menggunakan data simulasi.");
+  //       setSensorData(getMockData());
+  //       setConnectionStatus("disconnected");
+  //       setIsLoading(false);
+  //       return false;
+  //     }
+  //   }
+  // };
 
   // Real-time listener untuk data sensor
   useEffect(() => {
@@ -361,16 +361,6 @@ export default function DashboardPage() {
   const handleRetry = () => {
     setIsLoading(true);
     setError(null);
-    connectToFirebase();
-  };
-
-  const toggleAutoReload = () => {
-    setAutoReload(!autoReload);
-  };
-
-  const handleManualReload = async () => {
-    setLastReloadTime(Date.now());
-    await connectToFirebase();
   };
 
   const getStatusColor = (moisture: number) => {
