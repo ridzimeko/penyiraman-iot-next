@@ -4,11 +4,11 @@ import { useEffect, useState } from "react";
 import useRealtimeFirebase from "@/hooks/useRealtimeFirebase";
 
 export default function AllData() {
-  const [data, setData] = useState(null);
+  const [data, setData] = useState<any>(null);
   const sensorRef = useRealtimeFirebase(["/"])
 
   useEffect(() => {
-   setData(sensorRef);
+   return setData(sensorRef);
 
   }, [sensorRef]);
 
