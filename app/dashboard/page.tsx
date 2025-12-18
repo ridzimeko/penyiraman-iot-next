@@ -531,7 +531,6 @@ export default function DashboardPage() {
       {/* Main Content Tabs */}
       <Tabs defaultValue="chart" className="space-y-4">
         <TabsList>
-          <TabsTrigger value="chart">Grafik</TabsTrigger>
           <TabsTrigger value="control">Kontrol</TabsTrigger>
           <TabsTrigger value="activity">Aktivitas</TabsTrigger>
         </TabsList>
@@ -550,10 +549,6 @@ export default function DashboardPage() {
               />
             </CardContent>
           </Card>
-        </TabsContent>
-
-        <TabsContent value="chart">
-          <SensorChart />
         </TabsContent>
 
         <TabsContent value="activity">

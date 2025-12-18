@@ -19,11 +19,6 @@ const navigationItems = [
     icon: Home,
   },
   {
-    name: "Monitoring",
-    href: "/dashboard/monitoring",
-    icon: BarChart3,
-  },
-  {
     name: "Kontrol",
     href: "/dashboard/control",
     icon: Droplets,
